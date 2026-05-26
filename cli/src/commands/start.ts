@@ -6,7 +6,12 @@ import { VadMode } from '../vad';
 import { SessionQueue } from '../queue';
 import { HealthMonitor } from '../health';
 import { logger } from '../logger';
-import { trySetRawMode, getDefaultWhisperBin, checkAudioDependency } from '../platform';
+import {
+  trySetRawMode,
+  getDefaultWhisperBin,
+  checkAudioDependency,
+  prependVendorBinsToPath,
+} from '../platform';
 import {
   getTimestamp,
   ensureOutputDir,
@@ -46,6 +51,9 @@ function logLine(msg: string): void {
 }
 
 export async function runStart(opts: StartOptions): Promise<void> {
+  // setup-whisper で自動 DL された vendor/sox 等を mic ライブラリから見えるようにする
+  prependVendorBinsToPath();
+
   const config = {
     whisperBin: opts.whisperBin ?? process.env.WHISPER_BIN  ?? getDefaultWhisperBin(),
     modelPath:  opts.model      ?? process.env.WHISPER_MODEL ?? './models/ggml-base.bin',

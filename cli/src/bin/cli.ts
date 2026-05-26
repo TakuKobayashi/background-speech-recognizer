@@ -93,7 +93,7 @@ program
 
 program
   .command('setup-whisper')
-  .description('whisper.cpp を git clone して cmake でビルドする (cmake が無ければ自動 DL)')
+  .description('whisper.cpp を git clone して cmake でビルドする (cmake / sox が無ければ自動 DL)')
   .option('--dir <path>',            'clone 先ディレクトリ (デフォルト: ./whisper.cpp)')
   .option('--repo <url>',            'リポジトリ URL (デフォルト: 公式)')
   .option('--branch <name>',         'チェックアウトするブランチ / タグ')
@@ -101,6 +101,7 @@ program
   .option('--pull',                  '既に clone 済みの場合に git pull で更新する')
   .option('--cmake-version <ver>',   '自動 DL する cmake のバージョン (デフォルト: 3.31.5)')
   .option('--no-auto-cmake',         'cmake が無くても自動ダウンロードしない')
+  .option('--no-auto-sox',           'sox が無くても自動ダウンロード/インストールしない (Windows/macOS)')
   .action(async (opts) => {
     const { runSetupWhisper } = await import('../commands/setup-whisper');
     try {

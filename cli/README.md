@@ -307,7 +307,7 @@ npm run cli -- list-models --dest ./my-models
 
 ### `setup-whisper` — whisper.cpp をビルド
 
-`whisper.cpp` を git clone して cmake でビルドし、`./whisper.cpp/build/bin/...` に `whisper-cli` 実行ファイルを生成します。
+`whisper.cpp` を git clone して cmake でビルドし、`./whisper.cpp/build/bin/...` に `whisper-cli` 実行ファイルを生成します。あわせて **マイク入力に必要な `sox` (Windows / macOS) / `arecord` (Linux) も自動で用意** します。
 
 **必要なもの** — このコマンドが揃えるもの / 自分で入れるもの:
 
@@ -315,6 +315,8 @@ npm run cli -- list-models --dest ./my-models
 |---|---|---|
 | `git`                              | ✅ あらかじめ PATH に必要 | https://git-scm.com/ からインストール |
 | `cmake`                            | 🔄 **無ければ自動 DL** | `vendor/cmake/` に Kitware 公式リリースを取得して使う |
+| `sox` (Windows / macOS)            | 🔄 **無ければ自動 install** | Windows は `vendor/sox/` に SourceForge から portable 版を取得 / macOS は `brew install sox` を実行 |
+| `arecord` (Linux のみ)              | ⚠️ あらかじめ PATH に必要 | `sudo` が必要なので自動 install しない。`sudo apt install alsa-utils` で入れる |
 | C++ コンパイラ (MSVC / clang / gcc) | ✅ あらかじめ PATH に必要 | Windows: Visual Studio 2022 Build Tools / Linux: `build-essential` / macOS: Xcode CLT |
 
 ```bash
@@ -334,6 +336,7 @@ npm run cli -- setup-whisper [options]
 | `--pull`                | —               | 既に clone 済みの場合に `git pull` で更新する |
 | `--cmake-version <ver>` | `3.31.5`        | 自動 DL する cmake のバージョン |
 | `--no-auto-cmake`       | —               | cmake が無くても自動ダウンロードしない (手動 install のみ許容) |
+| `--no-auto-sox`         | —               | sox が無くても自動 install しない (Windows / macOS) |
 
 ```bash
 # 最短コース (公式リポジトリを浅く clone、必要なら cmake も自動 DL してビルド)
@@ -382,30 +385,139 @@ PATH に `cmake` が見つからない場合は次の順に動きます:
 
 ---
 
+## SoX (音声入力ツール) について
+
+このプロジェクトでは内部で `mic` パッケージを使ってマイクから生 PCM を読み出していますが、`mic` 自体は録音バックエンドを呼び出すだけで、実際にマイクから音を取り込むのは OS ごとに以下のツールです。
+
+| OS | 使われるツール | 役割 |
+|---|---|---|
+| Windows / macOS | **SoX** (`sox` 実行ファイル) | マイクから 16kHz / mono / 16bit PCM を吸い出して標準出力に流す |
+| Linux           | **arecord** (`alsa-utils` パッケージ) | 同上 (ALSA バックエンド経由) |
+
+どちらも単体の CLI ツールで、PATH に `sox` または `arecord` があれば自動的に使われます (`mic` パッケージが内部で `spawn` する)。これらが無いと `start` 起動時に「sox が見つかりません」「arecord: device not found」エラーになります。
+
+### `npm run setup-whisper` が代わりにやってくれること
+
+`npm run setup-whisper` を実行すると、cmake と一緒に sox / arecord も次のように確保します。
+
+| OS | 自動でやること |
+|---|---|
+| **Windows** | PATH に sox が無ければ SourceForge から `sox-14.4.2-win32.zip` (約 2.5 MB) を `vendor/sox/` にダウンロード&展開 |
+| **macOS**   | PATH に sox が無ければ `brew install sox` を実行 (Homebrew が必要) |
+| **Linux**   | `arecord` の有無のみチェック。無ければ手動 install 用のコマンドを表示するだけ (sudo 権限が必要なので自動実行しない) |
+
+`vendor/sox/` 配下に置かれた sox は `start` / `doctor` 起動時に自動で PATH 先頭に追加されるので、グローバル install は不要です。
+
+### 自分で個別にインストールしたい場合
+
+#### Windows
+
+```powershell
+# 方法 A: setup-whisper による自動 DL を使う (推奨)
+npm run setup-whisper                              # vendor/sox/sox-14.4.2/sox.exe に入る
+
+# 方法 B: 公式サイトからインストーラを使う
+# https://sourceforge.net/projects/sox/files/sox/14.4.2/sox-14.4.2-win32-installer.exe をダウンロードして実行
+# その後 PATH に C:\Program Files (x86)\sox-14-4-2 を通す
+
+# 方法 C: パッケージマネージャを使う
+winget install ChrisBagwell.SoX
+# または
+choco install sox.portable
+# または
+scoop install sox
+
+# 確認
+sox --version
+```
+
+#### macOS
+
+```bash
+# 方法 A: setup-whisper から自動で brew install させる (推奨)
+npm run setup-whisper                              # brew が入っていれば自動
+
+# 方法 B: 自分で brew install
+brew install sox
+
+# 方法 C: MacPorts
+sudo port install sox
+
+# 確認
+sox --version
+```
+
+#### Linux (Ubuntu / Debian)
+
+Linux では sox ではなく **arecord** (`alsa-utils`) を使います。sudo が必要なので自動 install は行わず、自分で:
+
+```bash
+sudo apt update
+sudo apt install -y alsa-utils                     # arecord を入れる
+
+# 確認
+arecord -l                                         # マイク一覧
+arecord --version
+```
+
+その他のディストリ:
+
+```bash
+# Fedora / RHEL
+sudo dnf install -y alsa-utils
+
+# Arch
+sudo pacman -S alsa-utils
+```
+
+### 動作確認 / トラブル切り分け
+
+```bash
+# 1. インストールできているか
+npm run cli -- doctor
+
+# 2. SoX を直接叩いて 3 秒録音 → wav 保存 (Windows / macOS)
+sox -d -t wav test.wav trim 0 3
+
+# 3. arecord で 3 秒録音 (Linux)
+arecord -d 3 -f cd test.wav
+
+# 4. デバイス一覧
+sox -h                                             # ※ Windows ビルドは waveaudio デバイスを使う
+arecord -l                                         # Linux: マイク番号を確認
+```
+
+Linux で複数マイクが刺さっているときは、`arecord -l` で出てきた `card 1, device 0` のような番号を `--device hw:1,0` の形で `start` に渡します。
+
+---
+
 ## 必要環境
 
 ### Windows 11
 | ツール | 必須 | 入手先 |
 |---|---|---|
-| Node.js 18+                       | ✅ | https://nodejs.org |
-| git                               | ✅ | https://git-scm.com/ |
-| Visual Studio 2022 Build Tools    | ✅ | https://aka.ms/vs/17/release/vs_BuildTools.exe |
-| SoX (オーディオ入力)              | ✅ | https://sourceforge.net/projects/sox/ (インストール後 PATH を通す) |
-| CMake                             | (任意) | 入っていなければ `npm run setup-whisper` が自動 DL します |
+| Node.js 18+                       | ✅       | https://nodejs.org |
+| git                               | ✅       | https://git-scm.com/ |
+| Visual Studio 2022 Build Tools    | ✅       | https://aka.ms/vs/17/release/vs_BuildTools.exe |
+| SoX (マイク入力)                  | (任意)   | 入っていなければ `npm run setup-whisper` が `vendor/sox/` に自動 DL |
+| CMake                             | (任意)   | 入っていなければ `npm run setup-whisper` が `vendor/cmake/` に自動 DL |
 
 ### Linux (Ubuntu/Debian)
 ```bash
 sudo apt update
 sudo apt install -y nodejs npm git build-essential libasound2-dev alsa-utils
+# ↑ alsa-utils (arecord) は必須で、sudo が必要なので setup-whisper では自動 install しません
+
 # cmake は `npm run setup-whisper` が自動 DL するので不要だが、apt の方が早ければ:
 # sudo apt install -y cmake
 ```
 
 ### macOS
 ```bash
-brew install node git sox
-# cmake は `npm run setup-whisper` が自動 DL するので不要だが、brew の方が早ければ:
-# brew install cmake
+brew install node git
+# sox / cmake は `npm run setup-whisper` が brew 経由 / 自動 DL してくれるので必須ではない。
+# 自分で先に入れたい場合:
+# brew install sox cmake
 ```
 
 ---
@@ -476,13 +588,22 @@ npm run cli -- doctor
 ```
 
 ### `sox が見つかりません` (Windows / macOS)
-- Windows: https://sourceforge.net/projects/sox/ をインストールして PATH に追加
-- macOS: `brew install sox`
+
+`npm run setup-whisper` を実行すれば自動で sox が用意されます。
+
+- Windows: `vendor/sox/sox-14.4.2/sox.exe` に SourceForge から portable 版を自動 DL
+- macOS: `brew install sox` を自動実行 (Homebrew が無ければエラー → 先に brew を入れる)
+
+手動で入れたい場合は[「SoX について」](#sox-音声入力ツール-について) を参照してください。自動 DL を止めるには `npm run cli -- setup-whisper --no-auto-sox` を使います。
 
 ### `arecord: device not found` (Linux)
+
+Linux では `alsa-utils` (sudo 必要) を自分で入れる必要があります:
+
 ```bash
-arecord -l                                        # デバイス一覧を表示
-npm run cli -- start --device hw:1,0              # 指定して再起動
+sudo apt install -y alsa-utils
+arecord -l                                        # マイク一覧を表示 (card N, device M を確認)
+npm run cli -- start --device hw:1,0              # 番号を指定して起動
 ```
 
 ### `whisper.cpp バイナリが見つかりません`

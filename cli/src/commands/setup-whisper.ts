@@ -5,11 +5,13 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { URL } from 'node:url';
 
-import { IS_WINDOWS } from '../platform';
+import { IS_WINDOWS, IS_LINUX, IS_MACOS } from '../platform';
 
 const REPO_DEFAULT          = 'https://github.com/ggerganov/whisper.cpp.git';
 const CMAKE_DEFAULT_VERSION = '3.31.5';
 const CMAKE_RELEASE_BASE    = 'https://github.com/Kitware/CMake/releases/download';
+const SOX_DEFAULT_VERSION   = '14.4.2';
+const SOX_DOWNLOAD_BASE     = 'https://downloads.sourceforge.net/project/sox/sox';
 
 export interface SetupWhisperOptions {
   dir?:           string;
@@ -19,6 +21,7 @@ export interface SetupWhisperOptions {
   pull?:          boolean;
   cmakeVersion?:  string;
   noAutoCmake?:   boolean;
+  noAutoSox?:     boolean;
 }
 
 export async function runSetupWhisper(opts: SetupWhisperOptions): Promise<void> {
@@ -35,6 +38,7 @@ export async function runSetupWhisper(opts: SetupWhisperOptions): Promise<void> 
 
   requireCommand('git', 'git をインストールしてください: https://git-scm.com/');
   const cmakeCmd = await ensureCmake(opts);
+  await ensureAudioTool(opts);
 
   if (fs.existsSync(cloneDir)) {
     console.log(`\n📁 既存ディレクトリを検出: ${cloneDir}`);
@@ -175,6 +179,107 @@ async function downloadAndInstallCmake(version: string): Promise<string> {
   console.log(`✅ cmake インストール完了: ${cmakeBin}`);
   return cmakeBin;
 }
+
+// ============================================================
+// 音声入力ツール: Windows/macOS は sox、Linux は arecord (alsa-utils)
+// ============================================================
+
+async function ensureAudioTool(opts: SetupWhisperOptions): Promise<void> {
+  if (IS_LINUX) {
+    if (commandWorks('arecord')) {
+      console.log('\n🎙  arecord 検出 OK (alsa-utils)');
+      return;
+    }
+    console.log('\n⚠️  arecord (alsa-utils) が PATH に見つかりません。');
+    console.log('   Linux では root 権限が必要なため自動 install は行いません。');
+    console.log('   手動で実行してください: sudo apt install alsa-utils');
+    return; // 致命的ではないので継続
+  }
+
+  // Windows / macOS: sox
+  if (commandWorks('sox')) {
+    console.log('\n🎙  sox 検出 OK');
+    return;
+  }
+
+  const vendorSox = findVendorSox();
+  if (vendorSox) {
+    console.log(`\n🎙  既存の vendor sox を再利用: ${vendorSox}`);
+    return;
+  }
+
+  if (opts.noAutoSox) {
+    throw new Error(
+      'sox が見つかりません。--no-auto-sox が指定されているので自動インストールは行いません。'
+    );
+  }
+
+  if (IS_WINDOWS) {
+    console.log('\n⚠️  sox が PATH に見つかりません。SourceForge から portable 版を自動ダウンロードします…');
+    await downloadAndInstallWindowsSox(SOX_DEFAULT_VERSION);
+  } else if (IS_MACOS) {
+    console.log('\n⚠️  sox が PATH に見つかりません。Homebrew で install を試みます…');
+    if (!commandWorks('brew')) {
+      throw new Error(
+        'Homebrew が見つからないため sox を自動 install できません。\n' +
+        '  → Homebrew を入れる: /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"\n' +
+        '  → その後: brew install sox  または  npm run setup-whisper'
+      );
+    }
+    run('brew', ['install', 'sox']);
+    console.log('✅ sox を Homebrew でインストールしました');
+  }
+}
+
+function findVendorSox(): string | null {
+  const vendorDir = path.resolve(process.cwd(), 'vendor', 'sox');
+  if (!fs.existsSync(vendorDir)) return null;
+  const soxName = IS_WINDOWS ? 'sox.exe' : 'sox';
+
+  // vendor/sox/sox.exe または vendor/sox/<release-dir>/sox.exe
+  const direct = path.join(vendorDir, soxName);
+  if (fs.existsSync(direct)) return direct;
+
+  for (const entry of fs.readdirSync(vendorDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const sub  = path.join(vendorDir, entry.name);
+    const path1 = path.join(sub, soxName);
+    if (fs.existsSync(path1)) return path1;
+  }
+  return null;
+}
+
+async function downloadAndInstallWindowsSox(version: string): Promise<void> {
+  const archive     = `sox-${version}-win32.zip`;
+  const url         = `${SOX_DOWNLOAD_BASE}/${version}/${archive}`;
+  const vendorDir   = path.resolve(process.cwd(), 'vendor', 'sox');
+  const archivePath = path.join(vendorDir, archive);
+
+  fs.mkdirSync(vendorDir, { recursive: true });
+
+  if (fs.existsSync(archivePath)) {
+    console.log(`   📦 既存のアーカイブを再利用: ${archivePath}`);
+  } else {
+    console.log(`   URL  : ${url}`);
+    console.log(`   保存 : ${archivePath}`);
+    await httpDownload(url, archivePath);
+  }
+
+  console.log(`\n📂 展開中: ${archive}`);
+  extractArchive(archivePath, archive, vendorDir);
+
+  try { fs.unlinkSync(archivePath); } catch { /* ignore */ }
+
+  const soxBin = findVendorSox();
+  if (!soxBin) {
+    throw new Error('sox の展開は完了しましたが sox.exe が見つかりません');
+  }
+  console.log(`✅ sox インストール完了: ${soxBin}`);
+}
+
+// ============================================================
+// cmake のアセット名解決
+// ============================================================
 
 function resolveCmakeAsset(version: string): { url: string; archive: string; extractedDirName: string } {
   // 公式リリースアセット命名規則: cmake-<ver>-<os>-<arch>.<ext>

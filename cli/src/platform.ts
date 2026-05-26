@@ -76,13 +76,44 @@ export function checkAudioDependency(): { ok: boolean; message: string } {
     return { ok: true, message: `${cmd} が見つかりました` };
   } catch {
     if (IS_LINUX) {
-      return { ok: false, message: 'arecord が見つかりません。apt install alsa-utils でインストールしてください。' };
+      return { ok: false, message: 'arecord が見つかりません。sudo apt install alsa-utils でインストールしてください。' };
     } else if (IS_WINDOWS) {
-      return { ok: false, message: 'sox が見つかりません。https://sourceforge.net/projects/sox/ からインストールしてください。' };
+      return { ok: false, message: 'sox が見つかりません。npm run setup-whisper で自動 DL するか、手動でインストールしてください: https://sourceforge.net/projects/sox/' };
     } else {
-      return { ok: false, message: 'sox が見つかりません。brew install sox でインストールしてください。' };
+      return { ok: false, message: 'sox が見つかりません。npm run setup-whisper で自動 install するか、brew install sox を実行してください。' };
     }
   }
+}
+
+/**
+ * `vendor/` 配下に setup-whisper が自動 DL した実行ファイル (sox, cmake など) が
+ * あれば PATH の先頭に追加する。start / doctor の冒頭で呼び出して、その後の
+ * mic ライブラリや checkAudioDependency が vendor の sox を見つけられるようにする。
+ */
+export function prependVendorBinsToPath(): void {
+  const vendorDir = path.resolve(process.cwd(), 'vendor');
+  if (!fs.existsSync(vendorDir)) return;
+
+  const sep      = IS_WINDOWS ? ';' : ':';
+  const soxName  = IS_WINDOWS ? 'sox.exe' : 'sox';
+  const additions: string[] = [];
+
+  // vendor/sox/ 直下、または vendor/sox/<release-dir>/ 配下を探す
+  const soxRoot = path.join(vendorDir, 'sox');
+  if (fs.existsSync(soxRoot)) {
+    if (fs.existsSync(path.join(soxRoot, soxName))) {
+      additions.push(soxRoot);
+    } else {
+      for (const entry of fs.readdirSync(soxRoot, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const sub = path.join(soxRoot, entry.name);
+        if (fs.existsSync(path.join(sub, soxName))) additions.push(sub);
+      }
+    }
+  }
+
+  if (additions.length === 0) return;
+  process.env.PATH = additions.join(sep) + sep + (process.env.PATH ?? '');
 }
 
 /**

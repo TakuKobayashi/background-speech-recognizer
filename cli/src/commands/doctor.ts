@@ -1,7 +1,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
-import { checkAudioDependency, getDefaultWhisperBin, IS_WINDOWS, IS_LINUX, IS_MACOS } from '../platform';
+import {
+  checkAudioDependency,
+  getDefaultWhisperBin,
+  prependVendorBinsToPath,
+  IS_WINDOWS,
+  IS_LINUX,
+  IS_MACOS,
+} from '../platform';
 
 interface Check {
   name: string;
@@ -16,6 +23,9 @@ export interface DoctorOptions {
 }
 
 export function runDoctor(opts: DoctorOptions): void {
+  // setup-whisper で自動 DL された vendor/sox 等も検出対象にする
+  prependVendorBinsToPath();
+
   const checks: Check[] = [];
 
   // Node.js
