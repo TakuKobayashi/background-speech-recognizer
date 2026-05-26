@@ -7,7 +7,6 @@ import { SessionQueue } from '../queue';
 import { HealthMonitor } from '../health';
 import { logger } from '../logger';
 import {
-  trySetRawMode,
   getDefaultWhisperBin,
   checkAudioDependency,
   prependVendorBinsToPath,
@@ -104,19 +103,36 @@ export async function runStart(opts: StartOptions): Promise<void> {
   const queue    = new SessionQueue(config.queueSize);
   const recorder = new VoiceRecorder(config.vadMode);
 
-  let isShuttingDown = false;
+  let isShuttingDown    = false;
+  let shutdownStartedAt = 0;
+  const SHUTDOWN_TIMEOUT_MS = 5000;
 
-  async function shutdown(): Promise<void> {
+  async function shutdown(reason: string): Promise<void> {
     if (isShuttingDown) return;
-    isShuttingDown = true;
+    isShuttingDown    = true;
+    shutdownStartedAt = Date.now();
 
-    logLine(`\n\n${C.yellow}🛑 シャットダウン中...${C.reset}`);
-    logger.info('[Main] シャットダウン開始');
+    logLine(`\n\n${C.yellow}🛑 シャットダウン中... (${reason})${C.reset}`);
+    logLine(`${C.dim}   もう一度 Ctrl+C を押すと強制終了します${C.reset}`);
+    logger.info(`[Main] シャットダウン開始 (${reason})`);
 
-    recorder.stop();
-    health.stop();
-    queue.clear();
-    await pool.shutdown();
+    // どこかで詰まっても確実に落ちるよう、タイマーで強制終了をかける
+    const killTimer = setTimeout(() => {
+      logLine(`\n${C.red}⚠ シャットダウンが ${SHUTDOWN_TIMEOUT_MS}ms 経っても終わらないので強制終了します${C.reset}`);
+      logger.error(`[Main] シャットダウンタイムアウト — process.exit(1)`);
+      process.exit(1);
+    }, SHUTDOWN_TIMEOUT_MS);
+    killTimer.unref(); // タイマー自体ではプロセスを生かさない
+
+    try {
+      recorder.stop();
+      health.stop();
+      queue.clear();
+      await pool.shutdown();
+    } catch (err) {
+      logger.error(`[Main] シャットダウン中エラー: ${String(err)}`);
+    }
+    clearTimeout(killTimer);
 
     const s = health.getStatus();
     logLine(`\n${C.cyan}═══ 終了統計 ═══${C.reset}`);
@@ -142,17 +158,24 @@ export async function runStart(opts: StartOptions): Promise<void> {
     health.recordError();
     if (err.message.includes('ENOMEM') || err.message.includes('Out of memory')) {
       logger.error('メモリ不足による緊急終了');
-      void shutdown();
+      void shutdown('out-of-memory');
     }
   });
-  process.on('SIGINT',  () => { void shutdown(); });
-  process.on('SIGTERM', () => { void shutdown(); });
 
-  if (trySetRawMode(process.stdin)) {
-    process.stdin.on('keypress', (_, key: { ctrl?: boolean; name?: string } | undefined) => {
-      if (key?.ctrl && key.name === 'c') { void shutdown(); }
-    });
-  }
+  // SIGINT を 2 回受けたら強制終了。1 回目は graceful shutdown。
+  // stdin を raw mode に入れると SIGINT が抑止されてしまうため、ここではあえて raw mode を使わない。
+  process.on('SIGINT', () => {
+    if (isShuttingDown) {
+      logLine(`\n${C.red}⛔ 強制終了します${C.reset}`);
+      logger.warn(`[Main] 2 回目の SIGINT で強制終了 (経過 ${Date.now() - shutdownStartedAt}ms)`);
+      process.exit(130);
+    }
+    void shutdown('Ctrl+C');
+  });
+  process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
+  // Windows でターミナルを閉じたときに飛んでくる
+  process.on('SIGBREAK', () => { void shutdown('SIGBREAK'); });
+  process.on('SIGHUP',   () => { void shutdown('SIGHUP'); });
 
   // ===== ディスパッチャ：Queue → Pool =====
   // SessionQueue から取り出して Worker Pool に投げ、戻り値が来たらファイル化。
@@ -282,6 +305,7 @@ function printHeader(config: {
   logLine(`${C.dim}VAD       : モード ${config.vadMode}${C.reset}`);
   logLine(`${C.dim}並列度    : worker x${config.concurrency}${C.reset}`);
   logLine('');
-  logLine(`${C.yellow}▶ マイク待機中... 話しかけてください (Ctrl+C で終了)${C.reset}`);
-  logLine(`${C.dim}${'─'.repeat(44)}${C.reset}`);
+  logLine(`${C.yellow}▶ マイク待機中... 話しかけてください${C.reset}`);
+  logLine(`${C.dim}  終了: Ctrl+C (1 回目=graceful、もう一度押すと強制終了)${C.reset}`);
+  logLine(`${C.dim}${'─'.repeat(60)}${C.reset}`);
 }

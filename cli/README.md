@@ -212,7 +212,40 @@ node --expose-gc dist/bin/cli.js start --concurrency 2 --log-level INFO
 
 > Windows PowerShell の場合は `npm run cli -- 'start --model ./models/ggml-small.bin --concurrency 2'` のように引数を 1 文字列にまとめてください。
 
-終了は **Ctrl+C** です。終了時に稼働時間 / 文字起こし数 / エラー数の統計が表示されます。
+#### 録音を止める方法
+
+録音中の画面 (`🔴 録音中 ███░░░ -34.3dB`) で **`Ctrl+C` を 1 回押す** とシャットダウンが始まります。
+
+1. `Ctrl+C` を **1 回**:
+   - 録音停止 → キュー破棄 → Worker Pool 停止 → 終了統計を表示して `exit 0`
+   - キューにジョブが残っていても 5 秒以内に必ず終了します (5 秒経過すると自動で強制終了)
+2. `Ctrl+C` を **2 回 (押した後にもう一度押す)**:
+   - graceful shutdown を待たずに即座に `exit 130` で強制終了
+
+終了時に表示される統計の例:
+
+```
+═══ 終了統計 ═══
+  稼働時間      : 5m23.4s
+  文字起こし数  : 12
+  エラー数      : 0
+  ドロップ数    : 0
+  マイク再接続  : 0
+  ヒープ使用    : 48 MB
+════════════════
+✅ 正常終了
+```
+
+> 補足: 旧バージョンでは stdin を raw mode にしていた影響で Ctrl+C が無視されることがありました。現在は raw mode を使わず SIGINT で停止するため、Windows / macOS / Linux いずれの端末でも `Ctrl+C` でちゃんと止まります。
+
+OS 側からのシグナルでも止まります:
+
+| OS | コマンド | 動作 |
+|---|---|---|
+| Linux / macOS  | `kill -INT <pid>`   | graceful shutdown (Ctrl+C と同じ) |
+| Linux / macOS  | `kill -TERM <pid>`  | graceful shutdown |
+| Windows        | タスクマネージャ「タスクの終了」 | graceful shutdown (SIGBREAK 経由) |
+| 全 OS          | `kill -KILL <pid>` / `taskkill /F` | 即時強制終了 (統計表示なし) |
 
 ---
 
@@ -586,6 +619,25 @@ nssm start WhisperCLI
 ```bash
 npm run cli -- doctor
 ```
+
+### `Ctrl+C` を押しても止まらない
+
+録音中の画面 (`🔴 録音中 ███░░░ ...`) で **`Ctrl+C` を 1 回** 押せば次のような出力が出てシャットダウンが始まります:
+
+```
+🛑 シャットダウン中... (Ctrl+C)
+   もう一度 Ctrl+C を押すと強制終了します
+```
+
+それでも止まらない場合:
+
+- もう一度 `Ctrl+C` を押す → 即座に `exit 130` で強制終了します
+- 何もしなくても 5 秒経過したら自動で強制終了します (シャットダウン処理が詰まっても確実に死ぬ設計)
+- 最悪 別ターミナルから:
+  - Linux / macOS: `pkill -KILL -f "dist/bin/cli.js start"`
+  - Windows (PowerShell): `Get-Process node | Where-Object { $_.CommandLine -match 'cli.js' } | Stop-Process -Force`
+
+> ターミナルアプリ (Windows Terminal / iTerm2 等) のキーバインドで Ctrl+C が別の機能に上書きされていないか念のため確認してください。
 
 ### `sox が見つかりません` (Windows / macOS)
 

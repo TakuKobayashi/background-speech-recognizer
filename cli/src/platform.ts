@@ -8,20 +8,6 @@ export const IS_MACOS   = process.platform === 'darwin';
 export const IS_LINUX   = process.platform === 'linux';
 
 /**
- * Windows では setRawMode が非 TTY 環境でクラッシュするため安全ラッパーを使用
- */
-export function trySetRawMode(stream: typeof process.stdin): boolean {
-  if (!stream.isTTY) return false;
-  if (typeof stream.setRawMode !== 'function') return false;
-  try {
-    stream.setRawMode(true);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
  * プラットフォーム別デフォルト whisper.cpp バイナリパス
  */
 export function getDefaultWhisperBin(): string {
