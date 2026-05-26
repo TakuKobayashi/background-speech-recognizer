@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Whisper 文字起こし</string>
+    <string name="start">開始</string>
+    <string name="stop">停止</string>
+    <string name="status_idle">停止中</string>
+    <string name="status_listening">待機中</string>
+    <string name="status_recording">録音中</string>
+    <string name="status_transcribing">文字起こし中…</string>
+    <string name="notification_channel_name">音声文字起こし</string>
+    <string name="notification_title">🎙️ Whisper 文字起こし</string>
+    <string name="perm_mic_rationale">音声の文字起こしにはマイクへのアクセスが必要です。</string>
+    <string name="perm_denied_message">マイクのアクセスが拒否されました。設定から手動で許可してください。</string>
+    <string name="delete_confirm_title">削除</string>
+    <string name="delete_confirm_message">この文字起こし結果を削除しますか？</string>
+    <string name="deleted_toast">削除しました</string>
+    <string name="empty_history">まだ文字起こしがありません</string>
+    <string name="latest_transcription_hint">ここに文字起こし結果が表示されます</string>
+    <string name="model_not_found">モデルが見つかりません</string>
+    <string name="battery_opt_title">バッテリー最適化の設定</string>
+    <string name="open_settings">設定を開く</string>
+    <string name="cancel">キャンセル</string>
+    <string name="later">後で</string>
+</resources>

@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment variables
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Generated reports (optional - コミットしたい場合はコメントアウト)
+daily-report-*.md
+reports/
+
+# Template (optional - カスタムテンプレートをコミットしない場合)
+# template.md

@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- ===== マイク ===== -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- ===== 通知 (Android 13+ Runtime Permission) ===== -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- ===== Foreground Service ===== -->
+    <!-- android:foregroundServiceType="microphone" に対応するパーミッション -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+
+    <!-- ===== WakeLock ===== -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- ===== ストレージ =====
+         Android 10+ (API 29+): Scoped Storage のため WRITE は不要
+         Android 9 以下向けに maxSdkVersion で制限 -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28"
+        tools:ignore="ScopedStorage" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <!-- Android 13+ の細分化ストレージパーミッション (音声ファイル読み込み用) -->
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+
+    <!-- ===== バッテリー最適化除外 ===== -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- ===== ハードウェア要件 ===== -->
+    <uses-feature
+        android:name="android.hardware.microphone"
+        android:required="true" />
+
+    <application
+        android:name=".WhisperApplication"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:largeHeap="true"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.WhisperTranscriber"
+        tools:targetApi="33">
+
+        <!-- ===== スプラッシュ (ランチャー) ===== -->
+        <activity
+            android:name=".SplashActivity"
+            android:exported="true"
+            android:screenOrientation="portrait">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- ===== メイン画面 ===== -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:screenOrientation="portrait" />
+
+        <!-- ===== Foreground Service =====
+             Android 14 (API 34): foregroundServiceType の明示が必須
+             Android 15 (API 35): startForeground() に ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE が必要 -->
+        <service
+            android:name=".service.TranscriptionService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="microphone"
+            android:stopWithTask="false" />
+
+    </application>
+</manifest>
