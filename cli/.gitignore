@@ -4,6 +4,15 @@ node_modules/
 # Build output
 dist/
 
+# `npm run setup-whisper` で自動ダウンロードされる外部ツール
+vendor/
+whisper.cpp/
+
+# ggml モデル / 文字起こし結果 / ログ
+models/
+outputs/
+logs/
+
 # Environment variables
 .env
 .env.local

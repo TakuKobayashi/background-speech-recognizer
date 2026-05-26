@@ -81,7 +81,8 @@ whisper-local-cli/
 ├── models/                # ggml モデル置き場 (download-model で自動作成)
 ├── outputs/               # 文字起こし結果 (.wav + .txt)
 ├── logs/                  # ログファイル (自動ローテーション)
-├── whisper.cpp/           # whisper.cpp ソース
+├── whisper.cpp/           # whisper.cpp ソース (setup-whisper で自動 clone)
+├── vendor/                # 自動 DL した cmake 等の外部ツール置き場 (setup-whisper で自動作成)
 ├── package.json
 ├── tsconfig.json
 └── README.md
@@ -306,7 +307,15 @@ npm run cli -- list-models --dest ./my-models
 
 ### `setup-whisper` — whisper.cpp をビルド
 
-`whisper.cpp` を git clone して cmake でビルドし、`./whisper.cpp/build/bin/...` に `whisper-cli` 実行ファイルを生成します。前提として `git` と `cmake` (Windows では加えて Visual Studio Build Tools) が PATH に通っている必要があります。
+`whisper.cpp` を git clone して cmake でビルドし、`./whisper.cpp/build/bin/...` に `whisper-cli` 実行ファイルを生成します。
+
+**必要なもの** — このコマンドが揃えるもの / 自分で入れるもの:
+
+| ツール | 必須 | 無いとき |
+|---|---|---|
+| `git`                              | ✅ あらかじめ PATH に必要 | https://git-scm.com/ からインストール |
+| `cmake`                            | 🔄 **無ければ自動 DL** | `vendor/cmake/` に Kitware 公式リリースを取得して使う |
+| C++ コンパイラ (MSVC / clang / gcc) | ✅ あらかじめ PATH に必要 | Windows: Visual Studio 2022 Build Tools / Linux: `build-essential` / macOS: Xcode CLT |
 
 ```bash
 # 専用 npm script (フラグなしならどの環境でも動く)
@@ -318,15 +327,23 @@ npm run cli -- setup-whisper [options]
 
 | オプション | デフォルト | 説明 |
 |---|---|---|
-| `--dir <path>`    | `./whisper.cpp` | clone 先ディレクトリ |
-| `--repo <url>`    | 公式リポジトリ  | clone するリポジトリ URL |
-| `--branch <name>` | (未指定)        | チェックアウトするブランチ / タグ |
-| `--rebuild`       | —               | 既存の `build/` を削除してから cmake をやり直す |
-| `--pull`          | —               | 既に clone 済みの場合に `git pull` で更新する |
+| `--dir <path>`          | `./whisper.cpp` | clone 先ディレクトリ |
+| `--repo <url>`          | 公式リポジトリ  | clone するリポジトリ URL |
+| `--branch <name>`       | (未指定)        | チェックアウトするブランチ / タグ |
+| `--rebuild`             | —               | 既存の `build/` を削除してから cmake をやり直す |
+| `--pull`                | —               | 既に clone 済みの場合に `git pull` で更新する |
+| `--cmake-version <ver>` | `3.31.5`        | 自動 DL する cmake のバージョン |
+| `--no-auto-cmake`       | —               | cmake が無くても自動ダウンロードしない (手動 install のみ許容) |
 
 ```bash
-# 最短コース (公式リポジトリを浅く clone してビルド)
+# 最短コース (公式リポジトリを浅く clone、必要なら cmake も自動 DL してビルド)
 npm run setup-whisper
+
+# cmake は自分で入れたものを使いたい (PATH にあれば自動でそれを使う)
+npm run cli -- setup-whisper --no-auto-cmake
+
+# cmake のバージョンを指定して DL
+npm run cli -- setup-whisper --cmake-version 3.30.5
 
 # 指定ブランチをチェックアウト
 npm run cli -- setup-whisper --branch v1.7.1
@@ -338,7 +355,25 @@ npm run cli -- setup-whisper --pull --rebuild
 npm run cli -- setup-whisper --dir ./vendor/whisper.cpp
 ```
 
-ビルドが終わると次のパスにバイナリが置かれます:
+#### cmake が自動でダウンロードされる仕組み
+
+PATH に `cmake` が見つからない場合は次の順に動きます:
+
+1. `vendor/cmake/cmake-<ver>-<os>-<arch>/` にあるバイナリを探して再利用
+2. なければ [Kitware 公式リリース](https://github.com/Kitware/CMake/releases) から OS / アーキ用の portable 版を `vendor/cmake/` に取得
+3. アーカイブを展開し、その中の `cmake` を以降のビルドで使用する
+
+ダウンロードされるファイル例:
+
+| OS / arch        | ファイル名 | サイズ |
+|---|---|---|
+| Windows x64      | `cmake-3.31.5-windows-x86_64.zip`    | 約 45 MB |
+| macOS (Universal)| `cmake-3.31.5-macos-universal.tar.gz` | 約 90 MB |
+| Linux x64        | `cmake-3.31.5-linux-x86_64.tar.gz`    | 約 50 MB |
+
+`vendor/` は `.gitignore` 済みです。自動 DL を完全に止めたい場合は `--no-auto-cmake` を付けてください。
+
+#### ビルド成果物の場所
 
 - Linux / macOS: `./whisper.cpp/build/bin/whisper-cli`
 - Windows:       `./whisper.cpp/build/bin/Release/whisper-cli.exe`
@@ -350,49 +385,41 @@ npm run cli -- setup-whisper --dir ./vendor/whisper.cpp
 ## 必要環境
 
 ### Windows 11
-| ツール | 入手先 |
-|---|---|
-| Node.js 18+                       | https://nodejs.org |
-| CMake                             | https://cmake.org/download/ |
-| Visual Studio 2022 Build Tools    | https://aka.ms/vs/17/release/vs_BuildTools.exe |
-| SoX (オーディオ入力)              | https://sourceforge.net/projects/sox/ (インストール後 PATH を通す) |
+| ツール | 必須 | 入手先 |
+|---|---|---|
+| Node.js 18+                       | ✅ | https://nodejs.org |
+| git                               | ✅ | https://git-scm.com/ |
+| Visual Studio 2022 Build Tools    | ✅ | https://aka.ms/vs/17/release/vs_BuildTools.exe |
+| SoX (オーディオ入力)              | ✅ | https://sourceforge.net/projects/sox/ (インストール後 PATH を通す) |
+| CMake                             | (任意) | 入っていなければ `npm run setup-whisper` が自動 DL します |
 
 ### Linux (Ubuntu/Debian)
 ```bash
 sudo apt update
-sudo apt install -y nodejs npm build-essential cmake libasound2-dev alsa-utils
+sudo apt install -y nodejs npm git build-essential libasound2-dev alsa-utils
+# cmake は `npm run setup-whisper` が自動 DL するので不要だが、apt の方が早ければ:
+# sudo apt install -y cmake
 ```
 
 ### macOS
 ```bash
-brew install node cmake sox
+brew install node git sox
+# cmake は `npm run setup-whisper` が自動 DL するので不要だが、brew の方が早ければ:
+# brew install cmake
 ```
 
 ---
 
 ## whisper.cpp のビルド
 
-通常は `npm run setup-whisper` で自動で git clone & cmake ビルドできます ([`setup-whisper` コマンド](#setup-whisper-whispercpp-をビルド) を参照)。
+`npm run setup-whisper` がそのまま git clone + (必要なら) cmake 自動 DL + cmake ビルドまで全部やります。詳しくは [`setup-whisper` コマンド](#setup-whisper-whispercpp-をビルド) を参照。
 
-手動でビルドしたい場合:
-
-**Linux / macOS:**
 ```bash
-git clone https://github.com/ggerganov/whisper.cpp.git
-cd whisper.cpp
-cmake -B build -DWHISPER_BUILD_EXAMPLES=ON
-cmake --build build --config Release -j$(nproc)
-cd ..
+# これだけで OK
+npm run setup-whisper
 ```
 
-**Windows (PowerShell・管理者):**
-```powershell
-git clone https://github.com/ggerganov/whisper.cpp.git
-cd whisper.cpp
-cmake -B build -DWHISPER_BUILD_EXAMPLES=ON
-cmake --build build --config Release
-cd ..
-```
+手動で同じことをやりたい場合は内部で実行している git / cmake コマンドを参照してください (Linux/macOS の場合 `cmake -B build -DWHISPER_BUILD_EXAMPLES=ON && cmake --build build --config Release -j$(nproc)`、Windows は `--config Release` 付きで MSVC 経由)。
 
 ---
 
@@ -460,6 +487,19 @@ npm run cli -- start --device hw:1,0              # 指定して再起動
 
 ### `whisper.cpp バイナリが見つかりません`
 `npm run setup-whisper` を実行するか、別ビルドのバイナリを `--whisper-bin <path>` で指定してください。
+
+### `cmake が見つかりません` / 自動 DL に失敗する
+通常は `npm run setup-whisper` 内で cmake が自動 DL されますが、ファイアウォール等で `github.com` への HTTPS が通らない環境では失敗します。
+
+```bash
+# 自動 DL を無効化して、自分でインストールした cmake を使う
+npm run cli -- setup-whisper --no-auto-cmake
+
+# 別バージョンを試す
+npm run cli -- setup-whisper --cmake-version 3.30.5
+```
+
+すでに自動 DL したアーカイブが残っていれば `vendor/cmake/*.zip` (または `.tar.gz`) を再利用するので、ネットが不安定でも再実行で進められます。
 
 ### モデルダウンロードが遅い / 失敗する
 huggingface はリージョンによっては不安定です。
