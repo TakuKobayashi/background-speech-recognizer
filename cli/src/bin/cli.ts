@@ -15,16 +15,35 @@ program
 program
   .command('start')
   .description('マイク常駐の文字起こしを開始（録音→Queue→Worker→Whisper の完全非同期パイプライン）')
-  .option('-m, --model <path>',       'ggml モデルファイルへのパス')
-  .option('-b, --whisper-bin <path>', 'whisper.cpp バイナリへのパス')
-  .option('-l, --language <lang>',    '言語コード (ja, en, …)')
-  .option('-o, --output <dir>',       '出力ディレクトリ')
-  .option('--vad <mode>',             'VAD 感度 0-3')
-  .option('--threads <n>',            'whisper.cpp スレッド数')
-  .option('--queue-size <n>',         'SessionQueue 最大件数')
-  .option('--concurrency <n>',        'whisper Worker 並列数 (デフォルト 1)')
-  .option('--device <id>',            'マイクデバイス ID')
+  .option('-m, --model <path>',         'ggml モデルファイルへのパス (デフォルト: ./models/ggml-base.bin)')
+  .option('-b, --whisper-bin <path>',   'whisper.cpp バイナリへのパス (デフォルト: OS 自動判定)')
+  .option('-l, --language <lang>',      '言語コード ja / en など (デフォルト: ja)')
+  .option('-o, --output <dir>',         '文字起こし結果の出力ディレクトリ (デフォルト: ./outputs)')
+  .option('--vad <mode>',               'VAD 感度 0-3 (デフォルト: 2)')
+  .option('--threads <n>',              'whisper.cpp の推論スレッド数 (デフォルト: CPU/2)')
+  .option('--queue-size <n>',           'SessionQueue の最大保持件数 (デフォルト: 8)')
+  .option('--concurrency <n>',          'whisper Worker の並列数 (デフォルト: 1)')
+  .option('--device <id>',              'マイクデバイス ID (例: hw:1,0)')
+  .option('--max-segment <seconds>',    '長時間発話を分割する秒数 (デフォルト: 30)')
+  .option('--segment-overlap <seconds>','セグメント間のオーバーラップ秒数 (デフォルト: 0.3)')
+  .option('--log-dir <dir>',            'ログ出力ディレクトリ (デフォルト: ./logs)')
+  .option('--log-level <level>',        'ログレベル DEBUG/INFO/WARN/ERROR (デフォルト: INFO)')
+  .option('--log-max-mb <n>',           'ログ 1 ファイルの最大サイズ (MB, デフォルト: 10)')
+  .option('--log-max-files <n>',        '保持するログファイル数 (デフォルト: 7)')
+  .option('--no-log-console',           'ログをコンソールに出さない')
+  .option('--no-color',                 'カラー出力を無効化する')
   .action(async (opts) => {
+    // commander オプションを環境変数に転写してから、それらを参照するモジュールを動的 import する。
+    // こうすると CLI 引数 > 環境変数 > デフォルト の優先順位で設定が反映される。
+    if (opts.maxSegment       !== undefined) process.env.MAX_SEGMENT_SECONDS     = String(opts.maxSegment);
+    if (opts.segmentOverlap   !== undefined) process.env.SEGMENT_OVERLAP_SECONDS = String(opts.segmentOverlap);
+    if (opts.logDir           !== undefined) process.env.LOG_DIR                 = String(opts.logDir);
+    if (opts.logLevel         !== undefined) process.env.LOG_LEVEL               = String(opts.logLevel).toUpperCase();
+    if (opts.logMaxMb         !== undefined) process.env.LOG_MAX_MB              = String(opts.logMaxMb);
+    if (opts.logMaxFiles      !== undefined) process.env.LOG_MAX_FILES           = String(opts.logMaxFiles);
+    if (opts.logConsole === false)           process.env.LOG_CONSOLE             = 'false';
+    if (opts.color === false)                process.env.NO_COLOR                = '1';
+
     const { runStart } = await import('../commands/start');
     const { logger } = await import('../logger');
     try {
