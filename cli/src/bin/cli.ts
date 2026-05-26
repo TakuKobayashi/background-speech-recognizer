@@ -91,6 +91,24 @@ program
     runListModels(opts);
   });
 
+program
+  .command('setup-whisper')
+  .description('whisper.cpp を git clone して cmake でビルドする')
+  .option('--dir <path>',    'clone 先ディレクトリ (デフォルト: ./whisper.cpp)')
+  .option('--repo <url>',    'リポジトリ URL (デフォルト: 公式)')
+  .option('--branch <name>', 'チェックアウトするブランチ / タグ')
+  .option('--rebuild',       '既存の build/ を削除してビルドし直す')
+  .option('--pull',          '既に clone 済みの場合に git pull で更新する')
+  .action(async (opts) => {
+    const { runSetupWhisper } = await import('../commands/setup-whisper');
+    try {
+      await runSetupWhisper(opts);
+    } catch (err) {
+      console.error('setup-whisper 失敗:', err instanceof Error ? err.message : err);
+      process.exit(1);
+    }
+  });
+
 if (process.argv.length <= 2) {
   program.outputHelp();
   process.exit(0);

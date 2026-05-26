@@ -20,7 +20,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts",
     "watch": "tsx watch src/bin/cli.ts start",
-    "claude": "dotenv -- claude"
+    "setup-whisper": "tsx src/bin/cli.ts setup-whisper"
   },
   "dependencies": {
     "commander": "^14.0.3",

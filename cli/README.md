@@ -64,7 +64,8 @@ whisper-local-cli/
 │   │   ├── start.ts               # 常駐録音メインロジック
 │   │   ├── download-model.ts      # huggingface からモデル取得
 │   │   ├── doctor.ts              # 環境診断
-│   │   └── list-models.ts         # モデル一覧
+│   │   ├── list-models.ts         # モデル一覧
+│   │   └── setup-whisper.ts       # whisper.cpp の git clone & cmake ビルド
 │   ├── worker/
 │   │   ├── transcriber-worker.ts  # worker_thread 本体
 │   │   └── transcriber-pool.ts    # Worker Pool マネージャ
@@ -90,31 +91,47 @@ whisper-local-cli/
 
 ## クイックスタート
 
-下の 5 つのコマンドを順に実行すれば、最低限の文字起こしができる状態になります。
+下のコマンドを順に実行すれば、最低限の文字起こしができる状態になります。
 
 ```bash
 # 1. 依存パッケージのインストール
-pnpm install                                # または npm install
+pnpm install                              # または npm install
 
 # 2. TypeScript をビルド
 npm run build
 
-# 3. whisper.cpp をビルド (後述の「whisper.cpp のビルド」参照)
+# 3. whisper.cpp を git clone & cmake ビルド
+npm run setup-whisper
 
 # 4. ggml モデルをダウンロード (base = 142 MB)
-npx tsx src/bin/cli.ts download-model base
+npm run cli -- download-model base
 
 # 5. 環境がそろっているか診断
-npx tsx src/bin/cli.ts doctor
+npm run cli -- doctor
 
 # 6. 起動 (Ctrl+C で終了)
-npx tsx src/bin/cli.ts start
+npm run cli -- start
 ```
 
-> 👉 **コマンドの渡し方について**
-> `npm run xxx -- --flag` 形式は Windows PowerShell では `--flag` が消えてしまい動きません。
-> 本 README ではどの環境でも動く `npx tsx src/bin/cli.ts <command> [options]` 形式で統一しています。
-> ビルド後は `node dist/bin/cli.js <command> [options]` でも同じ動作になります。
+> 👉 **`npm run cli` の引数について**
+> このプロジェクトは tsx を使って TypeScript の CLI (`src/bin/cli.ts`) を直接実行します。
+> `npm run cli` の後ろに `--` を付けてからサブコマンドとオプションを渡します。
+>
+> ```bash
+> # サブコマンドだけ
+> npm run cli -- doctor
+>
+> # オプション付き (Linux / macOS / Git Bash)
+> npm run cli -- start --model ./models/ggml-small.bin --concurrency 2
+> ```
+>
+> **Windows PowerShell で `--flag value` を渡したい場合は引数全体を引用符で囲んでください。**
+> PowerShell 5.1 は `--` 以降の `--flag` を勝手に削るため、丸ごと 1 つの文字列にしないと届きません。
+>
+> ```powershell
+> # PowerShell: 引数全体を 1 文字列に
+> npm run cli -- 'start --model ./models/ggml-small.bin --concurrency 2'
+> ```
 
 ---
 
@@ -126,13 +143,14 @@ npx tsx src/bin/cli.ts start
 | [`download-model`](#download-model-モデルをダウンロード) | huggingface から ggml モデルを取得 |
 | [`doctor`](#doctor-環境診断)                           | 依存ツール / バイナリ / モデルを診断 |
 | [`list-models`](#list-models-モデル一覧)               | インストール済みモデルを一覧 |
+| [`setup-whisper`](#setup-whisper-whispercpp-をビルド)  | whisper.cpp を git clone & cmake ビルド |
 
 ヘルプ:
 
 ```bash
-npx tsx src/bin/cli.ts help                  # 全体ヘルプ
-npx tsx src/bin/cli.ts help start            # start のオプション一覧
-npx tsx src/bin/cli.ts start --help          # 同上
+npm run cli -- help                # 全体ヘルプ
+npm run cli -- help start          # start のオプション一覧
+npm run cli -- start --help        # 同上
 ```
 
 ---
@@ -140,7 +158,7 @@ npx tsx src/bin/cli.ts start --help          # 同上
 ### `start` — マイク常駐で文字起こし
 
 ```bash
-npx tsx src/bin/cli.ts start [options]
+npm run cli -- start [options]
 ```
 
 | オプション | デフォルト | 説明 |
@@ -167,29 +185,31 @@ npx tsx src/bin/cli.ts start [options]
 
 ```bash
 # とりあえず動かす (全部デフォルト)
-npx tsx src/bin/cli.ts start
+npm run cli -- start
 
 # small モデル + 並列度 2 で高速化
-npx tsx src/bin/cli.ts start --model ./models/ggml-small.bin --concurrency 2
+npm run cli -- start --model ./models/ggml-small.bin --concurrency 2
 
 # 英語を文字起こし
-npx tsx src/bin/cli.ts start --language en
+npm run cli -- start --language en
 
 # 出力先を変える
-npx tsx src/bin/cli.ts start --output ./transcripts
+npm run cli -- start --output ./transcripts
 
 # Linux で特定マイクを指定
-npx tsx src/bin/cli.ts start --device hw:1,0
+npm run cli -- start --device hw:1,0
 
 # デバッグログを出す
-npx tsx src/bin/cli.ts start --log-level DEBUG
+npm run cli -- start --log-level DEBUG
+
+# 長い講演を細かく分割する (15 秒ごと)
+npm run cli -- start --max-segment 15
 
 # 24/7 運用 (ビルド済み + GC ヒント有効)
 node --expose-gc dist/bin/cli.js start --concurrency 2 --log-level INFO
-
-# 長い講演を細かく分割する (15 秒ごと)
-npx tsx src/bin/cli.ts start --max-segment 15
 ```
+
+> Windows PowerShell の場合は `npm run cli -- 'start --model ./models/ggml-small.bin --concurrency 2'` のように引数を 1 文字列にまとめてください。
 
 終了は **Ctrl+C** です。終了時に稼働時間 / 文字起こし数 / エラー数の統計が表示されます。
 
@@ -198,7 +218,7 @@ npx tsx src/bin/cli.ts start --max-segment 15
 ### `download-model` — モデルをダウンロード
 
 ```bash
-npx tsx src/bin/cli.ts download-model [name] [options]
+npm run cli -- download-model [name] [options]
 ```
 
 | オプション / 引数 | デフォルト | 説明 |
@@ -230,16 +250,16 @@ npx tsx src/bin/cli.ts download-model [name] [options]
 
 ```bash
 # 利用可能なモデルを一覧表示
-npx tsx src/bin/cli.ts download-model --list
+npm run cli -- download-model --list
 
 # base をダウンロード (./models/ggml-base.bin に保存)
-npx tsx src/bin/cli.ts download-model base
+npm run cli -- download-model base
 
 # large-v3 の量子化版 (容量が小さい)
-npx tsx src/bin/cli.ts download-model large-v3 --quantized q5_0
+npm run cli -- download-model large-v3 --quantized q5_0
 
 # 保存先を変えて再ダウンロード
-npx tsx src/bin/cli.ts download-model base --dest ./my-models --force
+npm run cli -- download-model base --dest ./my-models --force
 ```
 
 ---
@@ -247,7 +267,7 @@ npx tsx src/bin/cli.ts download-model base --dest ./my-models --force
 ### `doctor` — 環境診断
 
 ```bash
-npx tsx src/bin/cli.ts doctor [options]
+npm run cli -- doctor [options]
 ```
 
 | オプション | デフォルト | 説明 |
@@ -259,10 +279,10 @@ Node.js / 音声入力ツール (sox/arecord) / whisper.cpp バイナリ / モ�
 
 ```bash
 # デフォルト構成でチェック
-npx tsx src/bin/cli.ts doctor
+npm run cli -- doctor
 
 # 別のモデルで起動できるか確認
-npx tsx src/bin/cli.ts doctor --model ./models/ggml-small.bin
+npm run cli -- doctor --model ./models/ggml-small.bin
 ```
 
 ---
@@ -270,7 +290,7 @@ npx tsx src/bin/cli.ts doctor --model ./models/ggml-small.bin
 ### `list-models` — モデル一覧
 
 ```bash
-npx tsx src/bin/cli.ts list-models [options]
+npm run cli -- list-models [options]
 ```
 
 | オプション | デフォルト | 説明 |
@@ -278,9 +298,52 @@ npx tsx src/bin/cli.ts list-models [options]
 | `-d, --dest <dir>` | `./models` | モデルファイルが置いてあるディレクトリ |
 
 ```bash
-npx tsx src/bin/cli.ts list-models
-npx tsx src/bin/cli.ts list-models --dest ./my-models
+npm run cli -- list-models
+npm run cli -- list-models --dest ./my-models
 ```
+
+---
+
+### `setup-whisper` — whisper.cpp をビルド
+
+`whisper.cpp` を git clone して cmake でビルドし、`./whisper.cpp/build/bin/...` に `whisper-cli` 実行ファイルを生成します。前提として `git` と `cmake` (Windows では加えて Visual Studio Build Tools) が PATH に通っている必要があります。
+
+```bash
+# 専用 npm script (フラグなしならどの環境でも動く)
+npm run setup-whisper
+
+# CLI 経由でフラグ付きで呼ぶ場合
+npm run cli -- setup-whisper [options]
+```
+
+| オプション | デフォルト | 説明 |
+|---|---|---|
+| `--dir <path>`    | `./whisper.cpp` | clone 先ディレクトリ |
+| `--repo <url>`    | 公式リポジトリ  | clone するリポジトリ URL |
+| `--branch <name>` | (未指定)        | チェックアウトするブランチ / タグ |
+| `--rebuild`       | —               | 既存の `build/` を削除してから cmake をやり直す |
+| `--pull`          | —               | 既に clone 済みの場合に `git pull` で更新する |
+
+```bash
+# 最短コース (公式リポジトリを浅く clone してビルド)
+npm run setup-whisper
+
+# 指定ブランチをチェックアウト
+npm run cli -- setup-whisper --branch v1.7.1
+
+# 既にある clone を更新してから再ビルド
+npm run cli -- setup-whisper --pull --rebuild
+
+# 別の場所に置く
+npm run cli -- setup-whisper --dir ./vendor/whisper.cpp
+```
+
+ビルドが終わると次のパスにバイナリが置かれます:
+
+- Linux / macOS: `./whisper.cpp/build/bin/whisper-cli`
+- Windows:       `./whisper.cpp/build/bin/Release/whisper-cli.exe`
+
+別のパスのバイナリを使いたい場合は `start` / `doctor` の `--whisper-bin <path>` で指定します。
 
 ---
 
@@ -309,6 +372,10 @@ brew install node cmake sox
 
 ## whisper.cpp のビルド
 
+通常は `npm run setup-whisper` で自動で git clone & cmake ビルドできます ([`setup-whisper` コマンド](#setup-whisper-whispercpp-をビルド) を参照)。
+
+手動でビルドしたい場合:
+
 **Linux / macOS:**
 ```bash
 git clone https://github.com/ggerganov/whisper.cpp.git
@@ -326,12 +393,6 @@ cmake -B build -DWHISPER_BUILD_EXAMPLES=ON
 cmake --build build --config Release
 cd ..
 ```
-
-ビルドされるバイナリの場所:
-- Linux/macOS: `whisper.cpp/build/bin/whisper-cli`
-- Windows: `whisper.cpp/build/bin/Release/whisper-cli.exe`
-
-別の場所のバイナリを使いたい場合は `--whisper-bin <path>` で指定します。
 
 ---
 
@@ -384,7 +445,7 @@ nssm start WhisperCLI
 困ったらまず:
 
 ```bash
-npx tsx src/bin/cli.ts doctor
+npm run cli -- doctor
 ```
 
 ### `sox が見つかりません` (Windows / macOS)
@@ -393,19 +454,19 @@ npx tsx src/bin/cli.ts doctor
 
 ### `arecord: device not found` (Linux)
 ```bash
-arecord -l                                            # デバイス一覧を表示
-npx tsx src/bin/cli.ts start --device hw:1,0          # 指定して再起動
+arecord -l                                        # デバイス一覧を表示
+npm run cli -- start --device hw:1,0              # 指定して再起動
 ```
 
 ### `whisper.cpp バイナリが見つかりません`
-README の「whisper.cpp のビルド」セクションを実行するか、`--whisper-bin <path>` で別ビルドのバイナリを指定。
+`npm run setup-whisper` を実行するか、別ビルドのバイナリを `--whisper-bin <path>` で指定してください。
 
 ### モデルダウンロードが遅い / 失敗する
 huggingface はリージョンによっては不安定です。
 
 ```bash
 # 再試行 (上書き)
-npx tsx src/bin/cli.ts download-model base --force
+npm run cli -- download-model base --force
 ```
 
 または `https://huggingface.co/ggerganov/whisper.cpp` から `ggml-*.bin` を手動で `./models/` に置いても OK。
