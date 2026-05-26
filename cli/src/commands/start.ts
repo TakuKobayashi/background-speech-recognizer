@@ -49,6 +49,26 @@ function logLine(msg: string): void {
   process.stdout.write(msg + '\n');
 }
 
+/**
+ * whisper.cpp の出力から「発話ではない注釈」を取り除く。
+ * 例:
+ *   (音楽) / (笑) / (拍手)
+ *   [Music] / [Laughter] / [BLANK_AUDIO] / [SOUND]
+ *   （無音）/【効果音】/ ♪ ♫
+ * を消し、残った空白を圧縮した上でトリムする。
+ * クリーニング後に空文字になったら呼び出し側で「発話なし」として保存スキップする想定。
+ */
+function cleanTranscription(raw: string): string {
+  return raw
+    // 半角 / 全角の丸括弧・角括弧で囲まれた注釈を一律で削除
+    .replace(/[(\[（【][^)\]）】]*[)\]）】]/g, '')
+    // 楽譜記号
+    .replace(/[♪♫♬♩]/g, '')
+    // 連続する空白 (全角空白含む) を 1 つに圧縮
+    .replace(/[\s　]+/g, ' ')
+    .trim();
+}
+
 export async function runStart(opts: StartOptions): Promise<void> {
   // setup-whisper で自動 DL された vendor/sox 等を mic ライブラリから見えるようにする
   prependVendorBinsToPath();
@@ -198,38 +218,56 @@ export async function runStart(opts: StartOptions): Promise<void> {
       const wavPath   = path.join(config.outputDir, `${timestamp}_${session.segmentIndex}.wav`);
       const txtPath   = path.join(config.outputDir, `${timestamp}_${session.segmentIndex}.txt`);
 
-      try {
-        writeWav(wavPath, session.pcmBuffer);
+      // ローカルに退避: pool 側は別 ArrayBuffer をコピーして worker に Transferable する仕様
+      // (TranscriberPool.dispatch) なので、ここでは元 Buffer を保持し続けて結果が出たら使う。
+      const pcmBuffer = session.pcmBuffer;
 
+      try {
         const jobId = pool.newJobId();
-        // pool.enqueue は await するが、I/O 待ちなので録音は並行継続
         void pool.enqueue({
           jobId,
-          pcmBuffer:    session.pcmBuffer,
+          pcmBuffer,
           savedWavPath: wavPath,
           segmentIndex: session.segmentIndex,
           startedAt:    session.startedAt,
-        }).then(async (res) => {
-          if (res.ok && res.text) {
-            writeTxt(txtPath, res.text);
-            health.recordTranscription();
-            logLine(`\n${C.green}${C.bold}✅ #${res.segmentIndex} 完了 (${res.durationMs}ms)${C.reset}`);
-            logLine(`${C.white}${C.bold}💬 ${res.text}${C.reset}`);
-            logLine(`${C.dim}📁 ${wavPath}${C.reset}`);
-            logLine(`${C.dim}📄 ${txtPath}${C.reset}`);
-            logger.info(`[TX] #${res.segmentIndex} "${res.text.slice(0, 80)}" (${res.durationMs}ms)`);
+        }).then((res) => {
+          const cleaned = res.ok ? cleanTranscription(res.text ?? '') : '';
+
+          if (res.ok && cleaned.length > 0) {
+            // 文字起こし成功 & 発話あり → ここで初めて WAV / TXT を保存する
+            try {
+              writeWav(wavPath, pcmBuffer);
+              writeTxt(txtPath, cleaned);
+              health.recordTranscription();
+              logLine(`\n${C.green}${C.bold}✅ #${res.segmentIndex} 完了 (${res.durationMs}ms)${C.reset}`);
+              logLine(`${C.white}${C.bold}💬 ${cleaned}${C.reset}`);
+              logLine(`${C.dim}📁 ${wavPath}${C.reset}`);
+              logLine(`${C.dim}📄 ${txtPath}${C.reset}`);
+              logger.info(`[TX] #${res.segmentIndex} "${cleaned.slice(0, 80)}" (${res.durationMs}ms)`);
+            } catch (err) {
+              health.recordError();
+              logLine(`\n${C.red}❌ ファイル保存失敗: ${String(err)}${C.reset}`);
+              logger.error(`[Save] #${res.segmentIndex} ${String(err)}`);
+            }
+          } else if (res.ok) {
+            // whisper は走ったが、結果が音楽/効果音/沈黙だけ → WAV も TXT も書かない
+            health.recordDropped();
+            const orig = (res.text ?? '').trim();
+            logLine(`\n${C.dim}⏭ #${res.segmentIndex} 発話なし (orig: "${orig.slice(0, 40)}") → 保存スキップ${C.reset}`);
+            logger.info(`[TX] #${res.segmentIndex} non-speech 破棄: "${orig.slice(0, 80)}"`);
           } else {
+            // 文字起こし自体が失敗
             health.recordError();
             logLine(`\n${C.red}❌ #${res.segmentIndex} 文字起こしエラー: ${res.error}${C.reset}`);
             logger.error(`[TX] #${res.segmentIndex} エラー: ${res.error}`);
-            try { if (fs.existsSync(wavPath)) fs.unlinkSync(wavPath); } catch { /* ignore */ }
           }
         });
       } catch (err) {
         health.recordError();
-        logLine(`\n${C.red}❌ WAV 書き込み失敗: ${String(err)}${C.reset}`);
+        logLine(`\n${C.red}❌ ディスパッチャエラー: ${String(err)}${C.reset}`);
         logger.error(`[Dispatch] ${String(err)}`);
       } finally {
+        // session 側の参照は早めに切る (ローカル pcmBuffer がクロージャで保持しているので GC される心配はない)
         (session as { pcmBuffer?: Buffer }).pcmBuffer = undefined as unknown as Buffer;
       }
     }
