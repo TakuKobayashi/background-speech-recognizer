@@ -5,8 +5,8 @@ import {
   CHANNELS,
   BYTES_PER_SAMPLE,
   MIN_RECORD_SECONDS,
-  MAX_SEGMENT_SECONDS,
-  SEGMENT_OVERLAP_SECONDS,
+  DEFAULT_MAX_SEGMENT_SECONDS,
+  DEFAULT_SEGMENT_OVERLAP_SECONDS,
   VOICE_START_FRAMES,
   SILENCE_END_FRAMES,
   pcmToSeconds,
@@ -77,12 +77,17 @@ export class VoiceRecorder extends EventEmitter {
 
   private deviceId?: string;
 
-  constructor(vadMode: VadMode = VadMode.AGGRESSIVE) {
+  constructor(
+    vadMode: VadMode = VadMode.AGGRESSIVE,
+    opts: { maxSegmentSeconds?: number; segmentOverlapSeconds?: number } = {},
+  ) {
     super();
     this.vadProcessor    = new VadProcessor(vadMode);
     this.vadStateMachine = new VadStateMachine(VOICE_START_FRAMES, SILENCE_END_FRAMES);
-    this.maxSegmentBytes = MAX_SEGMENT_SECONDS * SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE;
-    this.overlapBytes    = Math.max(0, Math.floor(SEGMENT_OVERLAP_SECONDS * SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE));
+    const maxSeg  = opts.maxSegmentSeconds     ?? DEFAULT_MAX_SEGMENT_SECONDS;
+    const overlap = opts.segmentOverlapSeconds ?? DEFAULT_SEGMENT_OVERLAP_SECONDS;
+    this.maxSegmentBytes = maxSeg  * SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE;
+    this.overlapBytes    = Math.max(0, Math.floor(overlap * SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE));
   }
 
   start(deviceId?: string): void {

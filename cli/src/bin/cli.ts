@@ -23,7 +23,7 @@ program
   .option('--threads <n>',              'whisper.cpp の推論スレッド数 (デフォルト: CPU/2)')
   .option('--queue-size <n>',           'SessionQueue の最大保持件数 (デフォルト: 8)')
   .option('--concurrency <n>',          'whisper Worker の並列数 (デフォルト: 1)')
-  .option('--device <id>',              'マイクデバイス ID (例: hw:1,0)')
+  .option('--device <id>',              'マイクデバイス名/ID (`list-devices` で確認できる)')
   .option('--max-segment <seconds>',    '長時間発話を分割する秒数 (デフォルト: 30)')
   .option('--segment-overlap <seconds>','セグメント間のオーバーラップ秒数 (デフォルト: 0.3)')
   .option('--log-dir <dir>',            'ログ出力ディレクトリ (デフォルト: ./logs)')
@@ -89,6 +89,14 @@ program
   .action(async (opts) => {
     const { runListModels } = await import('../commands/list-models');
     runListModels(opts);
+  });
+
+program
+  .command('list-devices')
+  .description('利用可能なマイク (録音デバイス) を一覧表示する')
+  .action(async () => {
+    const { runListDevices } = await import('../commands/list-devices');
+    runListDevices();
   });
 
 program

@@ -5,7 +5,7 @@ import { VoiceRecorder, RecorderEvent, RecordingSession } from '../recorder';
 import { VadMode } from '../vad';
 import { SessionQueue } from '../queue';
 import { HealthMonitor } from '../health';
-import { logger } from '../logger';
+import { logger, type LogLevel } from '../logger';
 import {
   getDefaultWhisperBin,
   checkAudioDependency,
@@ -21,29 +21,45 @@ import {
 import { TranscriberPool } from '../worker/transcriber-pool';
 
 export interface StartOptions {
-  model?:       string;
-  whisperBin?:  string;
-  language?:    string;
-  output?:      string;
-  vad?:         string;
-  threads?:     string;
-  queueSize?:   string;
-  concurrency?: string;
-  device?:      string;
+  model?:          string;
+  whisperBin?:     string;
+  language?:       string;
+  output?:         string;
+  vad?:            string;
+  threads?:        string;
+  queueSize?:      string;
+  concurrency?:    string;
+  device?:         string;
+  maxSegment?:     string;
+  segmentOverlap?: string;
+  logDir?:         string;
+  logLevel?:       string;
+  logMaxMb?:       string;
+  logMaxFiles?:    string;
+  /** commander の --no-log-console が指定されると false が入る */
+  logConsole?:     boolean;
+  /** commander の --no-color が指定されると false が入る */
+  color?:          boolean;
 }
 
-const USE_COLOR = process.env.NO_COLOR === undefined && process.stdout.isTTY;
-const C = {
-  reset:  USE_COLOR ? '\x1b[0m'  : '',
-  bold:   USE_COLOR ? '\x1b[1m'  : '',
-  dim:    USE_COLOR ? '\x1b[2m'  : '',
-  red:    USE_COLOR ? '\x1b[31m' : '',
-  green:  USE_COLOR ? '\x1b[32m' : '',
-  yellow: USE_COLOR ? '\x1b[33m' : '',
-  blue:   USE_COLOR ? '\x1b[34m' : '',
-  cyan:   USE_COLOR ? '\x1b[36m' : '',
-  white:  USE_COLOR ? '\x1b[37m' : '',
-};
+type ColorPalette = ReturnType<typeof makeColors>;
+
+function makeColors(useColor: boolean) {
+  return {
+    reset:  useColor ? '\x1b[0m'  : '',
+    bold:   useColor ? '\x1b[1m'  : '',
+    dim:    useColor ? '\x1b[2m'  : '',
+    red:    useColor ? '\x1b[31m' : '',
+    green:  useColor ? '\x1b[32m' : '',
+    yellow: useColor ? '\x1b[33m' : '',
+    blue:   useColor ? '\x1b[34m' : '',
+    cyan:   useColor ? '\x1b[36m' : '',
+    white:  useColor ? '\x1b[37m' : '',
+  };
+}
+
+// 既定はカラー無効。runStart の中で opts を見て上書きする。
+let C: ColorPalette = makeColors(false);
 
 function logLine(msg: string): void {
   process.stdout.write(msg + '\n');
@@ -51,17 +67,25 @@ function logLine(msg: string): void {
 
 /**
  * whisper.cpp の出力から「発話ではない注釈」を取り除く。
- * 例:
- *   (音楽) / (笑) / (拍手)
- *   [Music] / [Laughter] / [BLANK_AUDIO] / [SOUND]
- *   （無音）/【効果音】/ ♪ ♫
- * を消し、残った空白を圧縮した上でトリムする。
- * クリーニング後に空文字になったら呼び出し側で「発話なし」として保存スキップする想定。
+ * 対応する括弧記号:
+ *   半角丸括弧   ( )      例: (音楽) (笑) (拍手) (inaudible) (Music)
+ *   半角角括弧   [ ]      例: [音楽] [Music] [Laughter] [BLANK_AUDIO] [SOUND]
+ *   全角丸括弧   （ ）    例: （無音）（笑）
+ *   全角角括弧   【 】    例: 【効果音】【BGM】
+ *   亀甲括弧     〔 〕    例: 〔音楽〕
+ *   山括弧       《 》    例: 《音楽》
+ *   楽譜記号     ♪ ♫ ♬ ♩
+ *
+ * クリーニング後に空文字になったら、呼び出し側で「発話なし」として保存スキップする想定。
+ *
+ * 注: 「」『 』 は発話 (台詞引用) に使われるためフィルタ対象には含めない。
  */
 function cleanTranscription(raw: string): string {
   return raw
-    // 半角 / 全角の丸括弧・角括弧で囲まれた注釈を一律で削除
-    .replace(/[(\[（【][^)\]）】]*[)\]）】]/g, '')
+    // ( ) [ ] （ ） 【 】 〔 〕 のどれかで囲まれたものを削除
+    .replace(/[(\[（【〔][^)\]）】〕]*[)\]）】〕]/g, '')
+    // 山括弧 《 》 で囲まれたものを削除 (上の置換と互換性がないので別に書く)
+    .replace(/《[^》]*》/g, '')
     // 楽譜記号
     .replace(/[♪♫♬♩]/g, '')
     // 連続する空白 (全角空白含む) を 1 つに圧縮
@@ -73,18 +97,40 @@ export async function runStart(opts: StartOptions): Promise<void> {
   // setup-whisper で自動 DL された vendor/sox 等を mic ライブラリから見えるようにする
   prependVendorBinsToPath();
 
+  // 環境変数は CLI option の fallback としてのみ参照する。
+  // どこでも process.env を mutation しない。
   const config = {
-    whisperBin: opts.whisperBin ?? process.env.WHISPER_BIN  ?? getDefaultWhisperBin(),
-    modelPath:  opts.model      ?? process.env.WHISPER_MODEL ?? './models/ggml-base.bin',
-    language:   opts.language   ?? process.env.WHISPER_LANG  ?? 'ja',
-    outputDir:  opts.output     ?? process.env.OUTPUT_DIR    ?? './outputs',
-    vadMode:    parseInt(opts.vad ?? process.env.VAD_MODE ?? '2') as VadMode,
-    threads:    opts.threads ? parseInt(opts.threads)
-                : (process.env.WHISPER_THREADS ? parseInt(process.env.WHISPER_THREADS) : undefined),
-    queueSize:  parseInt(opts.queueSize   ?? process.env.QUEUE_SIZE   ?? '8'),
-    concurrency:parseInt(opts.concurrency ?? process.env.WORKER_CONCURRENCY ?? '1'),
-    deviceId:   opts.device ?? process.env.MIC_DEVICE,
+    whisperBin:            opts.whisperBin ?? process.env.WHISPER_BIN  ?? getDefaultWhisperBin(),
+    modelPath:             opts.model      ?? process.env.WHISPER_MODEL ?? './models/ggml-base.bin',
+    language:              opts.language   ?? process.env.WHISPER_LANG  ?? 'ja',
+    outputDir:             opts.output     ?? process.env.OUTPUT_DIR    ?? './outputs',
+    vadMode:               parseInt(opts.vad ?? process.env.VAD_MODE ?? '2') as VadMode,
+    threads:               opts.threads ? parseInt(opts.threads)
+                           : (process.env.WHISPER_THREADS ? parseInt(process.env.WHISPER_THREADS) : undefined),
+    queueSize:             parseInt(opts.queueSize   ?? process.env.QUEUE_SIZE   ?? '8'),
+    concurrency:           parseInt(opts.concurrency ?? process.env.WORKER_CONCURRENCY ?? '1'),
+    deviceId:              opts.device ?? process.env.MIC_DEVICE,
+    maxSegmentSeconds:     parseFloat(opts.maxSegment     ?? process.env.MAX_SEGMENT_SECONDS     ?? '30'),
+    segmentOverlapSeconds: parseFloat(opts.segmentOverlap ?? process.env.SEGMENT_OVERLAP_SECONDS ?? '0.3'),
+    logDir:                opts.logDir   ?? process.env.LOG_DIR   ?? './logs',
+    logLevel:             (opts.logLevel ?? process.env.LOG_LEVEL ?? 'INFO').toUpperCase() as LogLevel,
+    logMaxMb:              parseInt(opts.logMaxMb    ?? process.env.LOG_MAX_MB    ?? '10'),
+    logMaxFiles:           parseInt(opts.logMaxFiles ?? process.env.LOG_MAX_FILES ?? '7'),
+    enableLogConsole:      opts.logConsole !== false && process.env.LOG_CONSOLE !== 'false',
+    useColor:              opts.color !== false && process.env.NO_COLOR === undefined && process.stdout.isTTY,
   } as const;
+
+  // ロガーをここで初めて設定する (モジュール読み込み時には何もしない)
+  logger.configure({
+    logDir:        config.logDir,
+    minLevel:      config.logLevel,
+    maxFileMb:     config.logMaxMb,
+    maxLogFiles:   config.logMaxFiles,
+    enableConsole: config.enableLogConsole,
+  });
+
+  // カラー設定を確定 (モジュール内の C 参照すべてに反映)
+  C = makeColors(config.useColor);
 
   const audioCheck = checkAudioDependency();
   if (!audioCheck.ok) {
@@ -121,7 +167,10 @@ export async function runStart(opts: StartOptions): Promise<void> {
   });
 
   const queue    = new SessionQueue(config.queueSize);
-  const recorder = new VoiceRecorder(config.vadMode);
+  const recorder = new VoiceRecorder(config.vadMode, {
+    maxSegmentSeconds:     config.maxSegmentSeconds,
+    segmentOverlapSeconds: config.segmentOverlapSeconds,
+  });
 
   let isShuttingDown    = false;
   let shutdownStartedAt = 0;

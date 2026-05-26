@@ -144,6 +144,7 @@ npm run cli -- start
 | [`download-model`](#download-model-モデルをダウンロード) | huggingface から ggml モデルを取得 |
 | [`doctor`](#doctor-環境診断)                           | 依存ツール / バイナリ / モデルを診断 |
 | [`list-models`](#list-models-モデル一覧)               | インストール済みモデルを一覧 |
+| [`list-devices`](#list-devices-マイク一覧)             | 利用できるマイク (録音デバイス) を一覧 |
 | [`setup-whisper`](#setup-whisper-whispercpp-をビルド)  | whisper.cpp を git clone & cmake ビルド |
 
 ヘルプ:
@@ -335,6 +336,54 @@ npm run cli -- list-models [options]
 npm run cli -- list-models
 npm run cli -- list-models --dest ./my-models
 ```
+
+---
+
+### `list-devices` — マイク一覧
+
+利用可能な録音デバイス (マイク) を OS ごとの方法で列挙します。**録音されている音声がおかしい (BGM が混ざる / ボイスチェンジャーがかかったような音になる) ときは、まずこのコマンドで正しいマイクを選んでください。**
+
+```bash
+npm run cli -- list-devices
+```
+
+OS 別の中身:
+
+| OS | 中で実行されるもの | 出力 |
+|---|---|---|
+| Windows | PowerShell `Get-PnpDevice -Class AudioEndpoint` | 録音 (`[mic]`) と再生 (`[spk]`) を分けて表示 |
+| Linux   | `arecord -l`                              | `card N, device M` 形式 |
+| macOS   | `system_profiler SPAudioDataType`         | Input セクションのデバイス名 |
+
+#### Windows の出力例
+
+```
+== 録音デバイス (これを --device に渡してください) ==
+  [mic] Microphone Array (AMD Audio Device)
+  [mic] ヘッドセット (UGREEN HiTune Max5c)
+
+== 参考: 再生デバイス (録音には使えません) ==
+  [spk] Speaker (Realtek(R) Audio)
+  [spk] ヘッドホン (UGREEN HiTune Max5c)
+```
+
+`[mic]` の後ろの名前をそのまま `--device` に渡せば、そのマイクから録音されます:
+
+```bash
+# 名前で指定 (Windows / macOS)
+npm run cli -- start --device "ヘッドセット (UGREEN HiTune Max5c)"
+
+# 番号で指定 (Linux: card N, device M)
+npm run cli -- start --device hw:1,0
+
+# 番号で指定 (Windows: sox waveaudio の数値 ID)
+npm run cli -- start --device 1
+```
+
+> **マイクが選べないとき / 既定が間違っているとき**
+> 1. Windows: 設定 → システム → サウンド → 入力 で既定の入力デバイスを切り替える
+> 2. macOS: システム設定 → サウンド → 入力 で選択する
+> 3. それでも `start` 側のデフォルト (`-d`) が変な音源を拾うときは、必ず `--device` で名前指定する
 
 ---
 
@@ -658,6 +707,24 @@ arecord -l                                        # マイク一覧を表示 (ca
 npm run cli -- start --device hw:1,0              # 番号を指定して起動
 ```
 
+### 録音されている音声が変 / ボイスチェンジャーがかかったような音になる / マイクではなく BGM が録音される
+
+OS の既定の録音デバイスが「物理マイク」ではなく **Stereo Mix / 仮想ループバック / NVIDIA Virtual Audio** のような **システム音声を拾うデバイス**になっているのが典型的な原因です。SoX (Windows/macOS) も `arecord` (Linux) もデフォルト指定のままだとそれを掴んでしまいます。
+
+```bash
+# 1. 利用可能なマイクを一覧表示する
+npm run cli -- list-devices
+
+# 2. その中から実際のマイク (例: [mic] ヘッドセット (UGREEN HiTune Max5c)) を選んで起動する
+npm run cli -- start --device "ヘッドセット (UGREEN HiTune Max5c)"
+```
+
+それでもおかしい場合は OS 設定で既定の入力を変えてください:
+
+- **Windows**: 設定 → システム → サウンド → 入力 → 既定のデバイスを切り替え (Stereo Mix / 何とか Virtual Audio はオフにする)
+- **macOS**: システム設定 → サウンド → 入力 → 実際のマイクを選ぶ
+- **Linux**: `pavucontrol` などで Default Source を物理マイクに変更
+
 ### `whisper.cpp バイナリが見つかりません`
 `npm run setup-whisper` を実行するか、別ビルドのバイナリを `--whisper-bin <path>` で指定してください。
 
@@ -727,12 +794,21 @@ outputs/
 
 文字起こし結果からは次のような「発話ではない注釈」を自動で除去します:
 
-- `(音楽)` `(笑)` `(拍手)` `（無音）` のような半角・全角の **丸括弧**
-- `[Music]` `[Laughter]` `[BLANK_AUDIO]` `[SOUND]` のような **角括弧**
-- `【効果音】` のような **全角角括弧**
-- `♪ ♫ ♬ ♩` の **楽譜記号**
+| 種類 | 例 |
+|---|---|
+| 半角丸括弧   `( )` | `(音楽)` `(笑)` `(拍手)` `(inaudible)` `(Music)` |
+| 半角角括弧   `[ ]` | `[音楽]` `[Music]` `[Laughter]` `[BLANK_AUDIO]` `[SOUND]` |
+| 全角丸括弧   `（ ）` | `（無音）` `（笑）` |
+| 全角角括弧   `【 】` | `【効果音】` `【BGM】` |
+| 亀甲括弧     `〔 〕` | `〔音楽〕` |
+| 山括弧       `《 》` | `《音楽》` |
+| 楽譜記号           | `♪ ♫ ♬ ♩` |
 
 注釈を取り除いた結果が空になるセグメントは「発話なし」として WAV ごと破棄するので、`outputs/` には**実際にしゃべった発話だけが残ります**。
+
+> 「`[音楽]` が `outputs/*.txt` に残っている」と感じたら、まず次を確認してください:
+> - 古い build (`dist/`) を使っていないか → `npm run build` してから `npm start`、または最初から `npm run cli -- start` を使う
+> - 古い出力ファイルが残っていないか → `outputs/` を一度空にして再録音
 
 ---
 

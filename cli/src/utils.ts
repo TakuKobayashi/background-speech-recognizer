@@ -12,16 +12,10 @@ export const VAD_FRAME_BYTES   = VAD_FRAME_SAMPLES * BYTES_PER_SAMPLE; // 320
 
 // 録音設定
 export const MIN_RECORD_SECONDS  = 1.0;
-/**
- * 1 セグメントの最大秒数。voice_end まで沈黙がない長い発話は、
- * この秒数ごとにチャンク分割して Queue に流す（完全非同期パイプラインのため）。
- */
-export const MAX_SEGMENT_SECONDS = parseInt(process.env.MAX_SEGMENT_SECONDS ?? '30');
-/**
- * セグメント分割時のオーバーラップ秒数。前セグメントの末尾を次セグメントの先頭に
- * 重ねて文脈ロスを防ぐ。
- */
-export const SEGMENT_OVERLAP_SECONDS = parseFloat(process.env.SEGMENT_OVERLAP_SECONDS ?? '0.3');
+/** 1 セグメントの最大秒数のデフォルト。VoiceRecorder のコンストラクタで上書き可能 */
+export const DEFAULT_MAX_SEGMENT_SECONDS     = 30;
+/** セグメント分割時のオーバーラップ秒数のデフォルト */
+export const DEFAULT_SEGMENT_OVERLAP_SECONDS = 0.3;
 export const SILENCE_TIMEOUT_MS  = 1500;
 export const VOICE_START_FRAMES  = 3;
 export const SILENCE_END_FRAMES  = 30;
