@@ -108,7 +108,14 @@ cd ..
 
 ### 4. モデルのダウンロード (新機能)
 
-v2.1 では `npm run download-model` で huggingface から直接 ggml モデルを取得できます。
+v2.1 では CLI から huggingface の ggml モデルを直接取得できます。
+
+> ⚠️ **Windows PowerShell の注意**
+> PowerShell は `npm run xxx -- --flag` の `--` を独自に解釈して、後続の `--xxx` フラグを取り除いてしまいます。
+> その結果 `--dest` / `--quantized` / `--list` などのフラグが届かず「too many arguments」「モデル名を指定してください」のように失敗します。
+> **位置引数だけ**を渡すなら `npm run download-model -- base` でも動作しますが、フラグを併用する場合は次の「直接実行」形式を使ってください。
+
+**位置引数のみ (どの環境でも動作):**
 
 ```bash
 # base モデル (推奨・142MB)
@@ -118,41 +125,78 @@ npm run download-model -- base
 npm run download-model -- small
 npm run download-model -- large-v3
 npm run download-model -- large-v3-turbo
+```
 
+**フラグ付き — `npx tsx` で直接実行 (PowerShell / bash 共通で動作):**
+
+```bash
 # 量子化バージョン (容量小)
-npm run download-model -- large-v3 --quantized q5_0
+npx tsx src/bin/cli.ts download-model large-v3 --quantized q5_0
 
 # 保存先指定 / 上書き
-npm run download-model -- base --dest ./models --force
+npx tsx src/bin/cli.ts download-model base --dest ./models --force
 
 # 利用可能モデル一覧
-npm run download-model -- --list
+npx tsx src/bin/cli.ts download-model --list
 ```
+
+> ビルド済みの場合は `npx tsx src/bin/cli.ts` の代わりに `node dist/bin/cli.js` でも同じことができます。
 
 ### 5. 起動診断
 
 ```bash
+# どちらでも可
 npm run doctor
+npx tsx src/bin/cli.ts doctor
 ```
 
 各種依存（Node.js / sox/arecord / whisper.cpp バイナリ / モデルファイル / 出力ディレクトリ）をまとめてチェックし、不足があれば修正手順を表示します。
 
-### 6. 起動
+特定のモデル / バイナリパスをチェックする場合 (フラグ付きなので直接実行):
 
 ```bash
-npm start                  # 通常起動
-npm run start:gc           # GC 最適化 (24/7 運用推奨)
+npx tsx src/bin/cli.ts doctor --model ./models/ggml-small.bin --whisper-bin ./whisper.cpp/build/bin/whisper-cli
+```
+
+### 6. 起動
+
+引数なしのデフォルト起動:
+
+```bash
+npm start                  # 通常起動 (要 build)
+npm run start:gc           # GC 最適化 (24/7 運用推奨・要 build)
 npm run dev                # tsx で TS を直接実行 (開発)
+```
+
+オプション付きで起動する場合は PowerShell では `npm start -- --flag` が機能しないため、直接実行してください:
+
+```bash
+# ビルドなしで開発実行 (どの環境でも動作)
+npx tsx src/bin/cli.ts start --model ./models/ggml-small.bin --concurrency 2
+
+# ビルド後の本番起動
+node dist/bin/cli.js start --model ./models/ggml-small.bin --concurrency 2
+
+# 24/7 運用 (GC ヒント有効)
+node --expose-gc dist/bin/cli.js start --concurrency 2
 ```
 
 ---
 
 ## CLI コマンド一覧
 
-v2.1 より commander を導入し、サブコマンド形式になりました。
+v2.1 より commander を導入し、サブコマンド形式になりました。CLI は次の 3 通りの方法で起動できます。
+
+| 起動方法 | 用途 | フラグ引数 |
+|---|---|---|
+| `npx tsx src/bin/cli.ts <command>` | TypeScript を直接実行 (開発・PowerShell でも安全) | ✅ そのまま |
+| `node dist/bin/cli.js <command>`   | ビルド後の本番実行                       | ✅ そのまま |
+| `npm run <script> -- <args>`       | npm script 経由                            | ⚠️ PowerShell では `--flag` が消える |
 
 ```bash
-whisper-cli <command> [options]
+# 推奨: 直接実行 (フラグ付きでも動く)
+npx tsx src/bin/cli.ts <command> [options]
+node dist/bin/cli.js <command> [options]
 ```
 
 | コマンド | 説明 |
@@ -177,12 +221,45 @@ whisper-cli <command> [options]
 | `--concurrency <n>`        | whisper Worker 並列数                | `1` |
 | `--device <id>`            | マイクデバイス ID                     | (自動) |
 
-### 直接実行する場合 (commander 経由で全機能アクセス)
+### 使用例 (PowerShell / bash どちらでも動く)
 
 ```bash
-npm run cli -- start --model ./models/ggml-small.bin --concurrency 2
-npm run cli -- doctor
-npm run cli -- help start
+# フル機能のヘルプ
+npx tsx src/bin/cli.ts help
+npx tsx src/bin/cli.ts help start
+npx tsx src/bin/cli.ts start --help
+
+# 起動 (small モデル・並列 2)
+npx tsx src/bin/cli.ts start --model ./models/ggml-small.bin --concurrency 2
+
+# 診断
+npx tsx src/bin/cli.ts doctor
+
+# モデル一覧
+npx tsx src/bin/cli.ts list-models
+```
+
+### npm script で動く・動かないコマンド
+
+```bash
+# ✅ 引数なし: どの環境でも動く
+npm start
+npm run start:gc
+npm run dev
+npm run doctor
+npm run models
+npm run build
+
+# ✅ 位置引数だけ: どの環境でも動く
+npm run download-model -- base
+npm run download-model -- large-v3
+
+# ⚠️ Windows PowerShell では --flag が消える
+npm run download-model -- --list                    # ← --list が消える
+npm run download-model -- base --dest ./models      # ← --dest が消える
+npm start -- --model ./models/ggml-small.bin        # ← --model が消える
+# → PowerShell の場合は上記の「npx tsx src/bin/cli.ts ...」形式に置き換えてください
+# → bash / zsh / Git Bash では問題なく動作します
 ```
 
 ---
@@ -334,7 +411,12 @@ sox --version
 
 ```bash
 arecord -l                # デバイス一覧
+
+# Linux / bash の場合
 npm start -- --device hw:1,0
+
+# Windows PowerShell の場合 (npm script の -- が壊れるため直接実行)
+npx tsx src/bin/cli.ts start --device hw:1,0
 ```
 
 ### `node-vad` ビルドエラー
@@ -348,7 +430,13 @@ node-vad がビルドできない場合でも、内蔵エネルギーベース V
 
 ### モデルダウンロードが遅い / 失敗する
 
-huggingface はリージョンによっては不安定です。`--force` で再試行、または直接 `https://huggingface.co/ggerganov/whisper.cpp` から `ggml-*.bin` を `./models/` 配下に置けば手動でも動きます。
+huggingface はリージョンによっては不安定です。`--force` で再試行できます (PowerShell の場合は `npm run download-model -- base --force` ではなく直接実行する):
+
+```bash
+npx tsx src/bin/cli.ts download-model base --force
+```
+
+または直接 `https://huggingface.co/ggerganov/whisper.cpp` から `ggml-*.bin` を `./models/` 配下に置けば手動でも動きます。
 
 ### メモリ使用量が増え続ける
 
