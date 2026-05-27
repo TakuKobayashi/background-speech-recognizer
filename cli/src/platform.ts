@@ -1,7 +1,8 @@
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
-import { execSync } from 'child_process';
+import { execFileSync, execSync, spawnSync } from 'child_process';
+import { DEFAULT_AUDIO_FORMAT, type AudioFormat } from './utils';
 
 export const IS_WINDOWS = process.platform === 'win32';
 export const IS_MACOS   = process.platform === 'darwin';
@@ -37,12 +38,12 @@ export function killProcess(pid: number): void {
 /**
  * mic パッケージのデバイス設定（プラットフォーム別）
  */
-export function getMicConfig(sampleRate: number, deviceId?: string): Record<string, string> {
+export function getMicConfig(format: AudioFormat, deviceId?: string): Record<string, string> {
   const base: Record<string, string> = {
-    rate: String(sampleRate),
-    channels: '1',
+    rate: String(format.sampleRate),
+    channels: String(format.channels),
     encoding: 'signed-integer',
-    bitwidth: '16',
+    bitwidth: String(format.bitDepth),
     endian: 'little',
     fileType: 'raw',
   };
@@ -50,6 +51,94 @@ export function getMicConfig(sampleRate: number, deviceId?: string): Record<stri
     base.device = deviceId;
   }
   return base;
+}
+
+export function resolveInputAudioFormat(deviceId?: string): AudioFormat {
+  const envRate = parseSampleRate(process.env.MIC_SAMPLE_RATE);
+  if (envRate) {
+    return { ...DEFAULT_AUDIO_FORMAT, sampleRate: envRate };
+  }
+
+  const detectedRates = IS_LINUX
+    ? detectLinuxSampleRates(deviceId)
+    : detectSoxCompatibleSampleRates(deviceId);
+  const sampleRate = choosePreferredSampleRate(detectedRates);
+  return { ...DEFAULT_AUDIO_FORMAT, sampleRate };
+}
+
+function parseSampleRate(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 8000 && n <= 192000 ? Math.round(n) : undefined;
+}
+
+function choosePreferredSampleRate(rates: number[]): number {
+  const unique = [...new Set(rates.filter(r => Number.isFinite(r) && r > 0))];
+  if (unique.includes(48000)) return 48000;
+  if (unique.includes(44100)) return 44100;
+  const common = unique.filter(r => r >= 44100 && r <= 96000).sort((a, b) => Math.abs(a - 48000) - Math.abs(b - 48000));
+  return common[0] ?? DEFAULT_AUDIO_FORMAT.sampleRate;
+}
+
+function detectLinuxSampleRates(deviceId?: string): number[] {
+  const args = [
+    ...(deviceId ? ['-D', deviceId] : []),
+    '--dump-hw-params',
+    '-f', 'S16_LE',
+    '-c', String(DEFAULT_AUDIO_FORMAT.channels),
+    '-d', '1',
+    '/dev/null',
+  ];
+
+  try {
+    const out = execFileSync('arecord', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 3000 });
+    return parseRatesFromText(out);
+  } catch {
+    return detectSoxCompatibleSampleRates(deviceId);
+  }
+}
+
+function detectSoxCompatibleSampleRates(deviceId?: string): number[] {
+  const candidates = [48000, 44100];
+  const ok: number[] = [];
+  for (const rate of candidates) {
+    if (probeSoxRate(rate, deviceId)) ok.push(rate);
+  }
+  return ok;
+}
+
+function probeSoxRate(sampleRate: number, deviceId?: string): boolean {
+  if (IS_LINUX) return false;
+  const inputType = IS_WINDOWS ? 'waveaudio' : 'coreaudio';
+  const inputDevice = deviceId ?? (IS_WINDOWS ? 'default' : 'default');
+  const args = [
+    '-q',
+    '-t', inputType,
+    inputDevice,
+    '-b', String(DEFAULT_AUDIO_FORMAT.bitDepth),
+    '--endian', 'little',
+    '-c', String(DEFAULT_AUDIO_FORMAT.channels),
+    '-r', String(sampleRate),
+    '-e', 'signed-integer',
+    '-t', 'raw',
+    '-',
+    'trim', '0', '0.05',
+  ];
+  const r = spawnSync('sox', args, { stdio: ['ignore', 'ignore', 'ignore'], timeout: 2000 });
+  return r.status === 0;
+}
+
+function parseRatesFromText(text: string): number[] {
+  const rates = new Set<number>();
+  const rateLine = text.split(/\r?\n/).find(line => /^\s*RATE:/.test(line));
+  if (!rateLine) return [];
+
+  const payload = rateLine.replace(/^\s*RATE:\s*/, '');
+  for (const m of payload.matchAll(/\d+/g)) {
+    const n = Number(m[0]);
+    if (n >= 8000 && n <= 192000) rates.add(n);
+  }
+  return [...rates];
 }
 
 /**

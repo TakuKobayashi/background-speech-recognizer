@@ -1,14 +1,34 @@
 import * as fs from 'fs';
 
-export const SAMPLE_RATE      = 16000;
-export const CHANNELS         = 1;
-export const BIT_DEPTH        = 16;
+export interface AudioFormat {
+  sampleRate: number;
+  channels: number;
+  bitDepth: number;
+}
+
+export const DEFAULT_AUDIO_FORMAT: AudioFormat = {
+  sampleRate: 48000,
+  channels: 1,
+  bitDepth: 16,
+};
+
+export const CHANNELS         = DEFAULT_AUDIO_FORMAT.channels;
+export const BIT_DEPTH        = DEFAULT_AUDIO_FORMAT.bitDepth;
 export const BYTES_PER_SAMPLE = BIT_DEPTH / 8;
 
 // 10ms フレーム = 160 サンプル = 320 バイト（WebRTC VAD 要件）
 export const VAD_FRAME_MS      = 10;
-export const VAD_FRAME_SAMPLES = (SAMPLE_RATE * VAD_FRAME_MS) / 1000; // 160
-export const VAD_FRAME_BYTES   = VAD_FRAME_SAMPLES * BYTES_PER_SAMPLE; // 320
+export function getBytesPerSample(format: AudioFormat = DEFAULT_AUDIO_FORMAT): number {
+  return format.bitDepth / 8;
+}
+
+export function getVadFrameBytes(format: AudioFormat = DEFAULT_AUDIO_FORMAT): number {
+  return Math.floor((format.sampleRate * VAD_FRAME_MS) / 1000) * format.channels * getBytesPerSample(format);
+}
+
+export function getBytesPerSecond(format: AudioFormat = DEFAULT_AUDIO_FORMAT): number {
+  return format.sampleRate * format.channels * getBytesPerSample(format);
+}
 
 // 録音設定
 export const MIN_RECORD_SECONDS  = 1.0;
@@ -33,10 +53,11 @@ export function ensureOutputDir(dir: string): void {
 /**
  * PCM バッファを WAV ファイルとして書き込む（外部依存ゼロ）
  */
-export function writeWav(filePath: string, pcmBuffer: Buffer): void {
+export function writeWav(filePath: string, pcmBuffer: Buffer, format: AudioFormat = DEFAULT_AUDIO_FORMAT): void {
   const dataSize  = pcmBuffer.length;
-  const byteRate  = SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE;
-  const blockAlign = CHANNELS * BYTES_PER_SAMPLE;
+  const bytesPerSample = getBytesPerSample(format);
+  const byteRate  = format.sampleRate * format.channels * bytesPerSample;
+  const blockAlign = format.channels * bytesPerSample;
   const header = Buffer.alloc(44);
   let off = 0;
 
@@ -45,7 +66,7 @@ export function writeWav(filePath: string, pcmBuffer: Buffer): void {
   const w2 = (v: number)  => { header.writeUInt16LE(v, off); off += 2; };
 
   ws('RIFF'); w4(dataSize + 36); ws('WAVE');
-  ws('fmt '); w4(16); w2(1); w2(CHANNELS); w4(SAMPLE_RATE); w4(byteRate); w2(blockAlign); w2(BIT_DEPTH);
+  ws('fmt '); w4(16); w2(1); w2(format.channels); w4(format.sampleRate); w4(byteRate); w2(blockAlign); w2(format.bitDepth);
   ws('data'); w4(dataSize);
 
   const fd = fs.openSync(filePath, 'w');
@@ -67,8 +88,8 @@ export function formatDuration(seconds: number): string {
   return m > 0 ? `${m}m${s}s` : `${s}s`;
 }
 
-export function pcmToSeconds(byteLength: number): number {
-  return byteLength / (SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE);
+export function pcmToSeconds(byteLength: number, format: AudioFormat = DEFAULT_AUDIO_FORMAT): number {
+  return byteLength / getBytesPerSecond(format);
 }
 
 /**
@@ -84,6 +105,8 @@ export function pcmToSeconds(byteLength: number): number {
 export class BoundedBuffer {
   private chunks: (Buffer | null)[] = [];
   private totalBytes = 0;
+
+  constructor(private readonly format: AudioFormat = DEFAULT_AUDIO_FORMAT) {}
 
   push(chunk: Buffer): void {
     this.chunks.push(chunk);
@@ -106,7 +129,7 @@ export class BoundedBuffer {
   }
 
   get byteLength(): number { return this.totalBytes; }
-  get durationSeconds(): number { return pcmToSeconds(this.totalBytes); }
+  get durationSeconds(): number { return pcmToSeconds(this.totalBytes, this.format); }
 
   clear(): void {
     for (let i = 0; i < this.chunks.length; i++) {

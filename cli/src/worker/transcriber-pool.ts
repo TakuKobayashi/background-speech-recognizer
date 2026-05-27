@@ -2,6 +2,7 @@ import { Worker } from 'worker_threads';
 import { EventEmitter } from 'events';
 import * as path from 'path';
 import { logger } from '../logger';
+import type { AudioFormat } from '../utils';
 
 export interface TranscriberPoolOptions {
   whisperBin: string;
@@ -16,6 +17,7 @@ export interface TranscriberPoolOptions {
 export interface TranscribeJob {
   jobId: string;
   pcmBuffer: Buffer;
+  audioFormat: AudioFormat;
   savedWavPath?: string;
   segmentIndex: number;
   startedAt: Date;
@@ -188,6 +190,7 @@ export class TranscriberPool extends EventEmitter {
         type: 'job',
         jobId: job.jobId,
         pcmBuffer: copy,
+        audioFormat: job.audioFormat,
         savedWavPath: job.savedWavPath,
         segmentIndex: job.segmentIndex,
         startedAtIso: job.startedAt.toISOString(),

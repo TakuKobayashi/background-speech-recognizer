@@ -1,9 +1,9 @@
 import { EventEmitter } from 'events';
 import {
   BoundedBuffer,
-  SAMPLE_RATE,
-  CHANNELS,
-  BYTES_PER_SAMPLE,
+  DEFAULT_AUDIO_FORMAT,
+  type AudioFormat,
+  getBytesPerSecond,
   MIN_RECORD_SECONDS,
   DEFAULT_MAX_SEGMENT_SECONDS,
   DEFAULT_SEGMENT_OVERLAP_SECONDS,
@@ -12,7 +12,7 @@ import {
   pcmToSeconds,
 } from './utils';
 import { VadProcessor, VadStateMachine, VadMode } from './vad';
-import { getMicConfig } from './platform';
+import { getMicConfig, resolveInputAudioFormat } from './platform';
 import { logger } from './logger';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -20,6 +20,7 @@ const mic = require('mic');
 
 export interface RecordingSession {
   pcmBuffer: Buffer;
+  audioFormat: AudioFormat;
   startedAt: Date;
   durationSeconds: number;
   /** 通し番号（同一発話内のセグメントを識別） */
@@ -54,13 +55,15 @@ export class VoiceRecorder extends EventEmitter {
   // VAD
   private vadProcessor:   VadProcessor;
   private vadStateMachine: VadStateMachine;
+  private readonly vadMode: VadMode;
 
   // 録音バッファ
   private activeBuffer:   BoundedBuffer | null = null;
   private sessionStart:   Date | null = null;
   private segmentIndex = 0;
-  private readonly maxSegmentBytes: number;
-  private readonly overlapBytes: number;
+  private readonly maxSegmentSeconds: number;
+  private readonly segmentOverlapSeconds: number;
+  private audioFormat: AudioFormat = DEFAULT_AUDIO_FORMAT;
 
   // プリロールバッファ（固定サイズ循環）
   private readonly PRE_ROLL_FRAMES = 15; // 150ms
@@ -82,12 +85,11 @@ export class VoiceRecorder extends EventEmitter {
     opts: { maxSegmentSeconds?: number; segmentOverlapSeconds?: number } = {},
   ) {
     super();
-    this.vadProcessor    = new VadProcessor(vadMode);
+    this.vadMode         = vadMode;
+    this.vadProcessor    = new VadProcessor(this.vadMode, this.audioFormat);
     this.vadStateMachine = new VadStateMachine(VOICE_START_FRAMES, SILENCE_END_FRAMES);
-    const maxSeg  = opts.maxSegmentSeconds     ?? DEFAULT_MAX_SEGMENT_SECONDS;
-    const overlap = opts.segmentOverlapSeconds ?? DEFAULT_SEGMENT_OVERLAP_SECONDS;
-    this.maxSegmentBytes = maxSeg  * SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE;
-    this.overlapBytes    = Math.max(0, Math.floor(overlap * SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE));
+    this.maxSegmentSeconds     = opts.maxSegmentSeconds     ?? DEFAULT_MAX_SEGMENT_SECONDS;
+    this.segmentOverlapSeconds = opts.segmentOverlapSeconds ?? DEFAULT_SEGMENT_OVERLAP_SECONDS;
   }
 
   start(deviceId?: string): void {
@@ -118,7 +120,10 @@ export class VoiceRecorder extends EventEmitter {
   // ===== プライベート =====
 
   private startMic(): void {
-    const config = getMicConfig(SAMPLE_RATE, this.deviceId);
+    this.audioFormat = resolveInputAudioFormat(this.deviceId);
+    this.vadProcessor.destroy();
+    this.vadProcessor = new VadProcessor(this.vadMode, this.audioFormat);
+    const config = getMicConfig(this.audioFormat, this.deviceId);
 
     try {
       this.micInstance = mic(config);
@@ -140,7 +145,7 @@ export class VoiceRecorder extends EventEmitter {
 
     (this.micInstance as { start(): void }).start();
     this.reconnectAttempts = 0;
-    logger.info('[Recorder] マイク開始');
+    logger.info(`[Recorder] マイク開始 sampleRate=${this.audioFormat.sampleRate} channels=${this.audioFormat.channels} bitDepth=${this.audioFormat.bitDepth}`);
   }
 
   private destroyMic(): void {
@@ -224,7 +229,7 @@ export class VoiceRecorder extends EventEmitter {
     // 録音中ならバッファに追加 → セグメント上限到達なら切り出す
     if (this.activeBuffer) {
       this.activeBuffer.push(chunk);
-      if (this.activeBuffer.byteLength >= this.maxSegmentBytes) {
+      if (this.activeBuffer.byteLength >= Math.floor(this.maxSegmentSeconds * getBytesPerSecond(this.audioFormat))) {
         this.flushSegment(true);
       }
     }
@@ -232,7 +237,7 @@ export class VoiceRecorder extends EventEmitter {
 
   private onVoiceStart(): void {
     this.sessionStart = new Date();
-    this.activeBuffer = new BoundedBuffer();
+    this.activeBuffer = new BoundedBuffer(this.audioFormat);
     this.segmentIndex = 0;
 
     // プリロール（音声開始前のデータを先頭に追加）
@@ -256,20 +261,21 @@ export class VoiceRecorder extends EventEmitter {
     if (!this.activeBuffer || !this.sessionStart) return;
 
     const pcmBuffer       = this.activeBuffer.concat();
-    const durationSeconds = pcmToSeconds(pcmBuffer.length);
+    const durationSeconds = pcmToSeconds(pcmBuffer.length, this.audioFormat);
     const startedAt       = this.sessionStart;
     const idx             = this.segmentIndex++;
 
     // バッファクリア (continued の場合はオーバーラップを次バッファに繰り越す)
     let overlapTail: Buffer | null = null;
-    if (continued && this.overlapBytes > 0) {
-      overlapTail = this.activeBuffer.splitTail(this.overlapBytes);
+    const overlapBytes = Math.max(0, Math.floor(this.segmentOverlapSeconds * getBytesPerSecond(this.audioFormat)));
+    if (continued && overlapBytes > 0) {
+      overlapTail = this.activeBuffer.splitTail(overlapBytes);
     }
     this.activeBuffer.clear();
 
     if (continued) {
       // 次セグメント用バッファを準備
-      this.activeBuffer = new BoundedBuffer();
+      this.activeBuffer = new BoundedBuffer(this.audioFormat);
       if (overlapTail && overlapTail.length > 0) {
         this.activeBuffer.push(overlapTail);
       }
@@ -286,6 +292,7 @@ export class VoiceRecorder extends EventEmitter {
 
     const session: RecordingSession = {
       pcmBuffer,
+      audioFormat: this.audioFormat,
       startedAt,
       durationSeconds,
       segmentIndex: idx,

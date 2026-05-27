@@ -1,6 +1,6 @@
 import { parentPort, workerData } from 'worker_threads';
 import { Transcriber } from '../transcriber';
-import { writeWav } from '../utils';
+import { writeWav, type AudioFormat } from '../utils';
 import { makeTmpPath, safeUnlink } from '../platform';
 
 /**
@@ -23,6 +23,7 @@ interface JobRequest {
   type: 'job';
   jobId: string;
   pcmBuffer: ArrayBuffer;       // Transferable
+  audioFormat: AudioFormat;
   savedWavPath?: string;        // 結果と紐付け用 (Worker は使わない)
   segmentIndex: number;
   startedAtIso: string;
@@ -74,7 +75,7 @@ async function handleJob(msg: JobRequest): Promise<void> {
   const tmpWav = makeTmpPath('worker', 'wav');
 
   try {
-    writeWav(tmpWav, pcm);
+    writeWav(tmpWav, pcm, msg.audioFormat);
     const result = await transcriber.transcribeFile(tmpWav);
     const res: JobResponse = {
       type: 'result',

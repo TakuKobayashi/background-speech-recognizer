@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import { VAD_FRAME_BYTES, SAMPLE_RATE } from './utils';
+import { DEFAULT_AUDIO_FORMAT, getVadFrameBytes, type AudioFormat } from './utils';
 import { logger } from './logger';
 
 export enum VadMode {
@@ -79,13 +79,18 @@ class EnergyVad {
 // ===================================================================
 export class VadProcessor extends EventEmitter {
   private readonly vad: { processAudio(frame: Buffer, rate: number): Promise<number> };
+  private readonly sampleRate: number;
+  private readonly frameBytes: number;
   private frameIndex  = 0;
   // 修正: residualBuffer は必ず VAD_FRAME_BYTES 未満に保つ
   private residual = Buffer.alloc(0);
 
-  constructor(mode: VadMode = VadMode.AGGRESSIVE) {
+  constructor(mode: VadMode = VadMode.AGGRESSIVE, format: AudioFormat = DEFAULT_AUDIO_FORMAT) {
     super();
-    if (nodeVadClass) {
+    this.sampleRate = format.sampleRate;
+    this.frameBytes = getVadFrameBytes(format);
+
+    if (nodeVadClass && isNodeVadSampleRate(format.sampleRate)) {
       try {
         this.vad = new nodeVadClass(mode);
       } catch {
@@ -103,7 +108,7 @@ export class VadProcessor extends EventEmitter {
    */
   async processChunk(chunk: Buffer): Promise<VadEvent[]> {
     // 残余バッファが VAD_FRAME_BYTES を超えていたら捨てる（異常系ガード）
-    if (this.residual.length >= VAD_FRAME_BYTES) {
+    if (this.residual.length >= this.frameBytes) {
       logger.warn('[VAD] residualBuffer overflow — リセット');
       this.residual = Buffer.alloc(0);
     }
@@ -112,12 +117,12 @@ export class VadProcessor extends EventEmitter {
     const events: VadEvent[] = [];
     let offset = 0;
 
-    while (offset + VAD_FRAME_BYTES <= buf.length) {
-      const frame = buf.slice(offset, offset + VAD_FRAME_BYTES);
-      offset += VAD_FRAME_BYTES;
+    while (offset + this.frameBytes <= buf.length) {
+      const frame = buf.slice(offset, offset + this.frameBytes);
+      offset += this.frameBytes;
 
       try {
-        const raw = await this.vad.processAudio(frame, SAMPLE_RATE);
+        const raw = await this.vad.processAudio(frame, this.sampleRate);
         const result: VadResult = raw === NODE_VAD_VOICE_EVENT ? VadResult.VOICE : VadResult.SILENCE;
         const evt: VadEvent = { result, frameIndex: this.frameIndex++ };
         events.push(evt);
@@ -142,6 +147,10 @@ export class VadProcessor extends EventEmitter {
     this.residual = Buffer.alloc(0);
     this.removeAllListeners();
   }
+}
+
+function isNodeVadSampleRate(sampleRate: number): boolean {
+  return sampleRate === 8000 || sampleRate === 16000 || sampleRate === 32000 || sampleRate === 48000;
 }
 
 // ===================================================================

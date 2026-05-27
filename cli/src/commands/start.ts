@@ -276,6 +276,7 @@ export async function runStart(opts: StartOptions): Promise<void> {
         void pool.enqueue({
           jobId,
           pcmBuffer,
+          audioFormat: session.audioFormat,
           savedWavPath: wavPath,
           segmentIndex: session.segmentIndex,
           startedAt:    session.startedAt,
@@ -285,7 +286,7 @@ export async function runStart(opts: StartOptions): Promise<void> {
           if (res.ok && cleaned.length > 0) {
             // 文字起こし成功 & 発話あり → ここで初めて WAV / TXT を保存する
             try {
-              writeWav(wavPath, pcmBuffer);
+              writeWav(wavPath, pcmBuffer, session.audioFormat);
               writeTxt(txtPath, cleaned);
               health.recordTranscription();
               logLine(`\n${C.green}${C.bold}✅ #${res.segmentIndex} 完了 (${res.durationMs}ms)${C.reset}`);
