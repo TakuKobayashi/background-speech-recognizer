@@ -1,7 +1,8 @@
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
-import { execFileSync, execSync, spawnSync } from 'child_process';
+import { execFileSync, execSync, spawn, spawnSync, type ChildProcessByStdio } from 'child_process';
+import { Readable } from 'stream';
 import { DEFAULT_AUDIO_FORMAT, type AudioFormat } from './utils';
 
 export const IS_WINDOWS = process.platform === 'win32';
@@ -51,6 +52,64 @@ export function getMicConfig(format: AudioFormat, deviceId?: string): Record<str
     base.device = deviceId;
   }
   return base;
+}
+
+export interface AudioCaptureProcess {
+  process: ChildProcessByStdio<null, Readable, Readable>;
+  command: string;
+  args: string[];
+}
+
+/**
+ * Start audio capture as normalized raw PCM.
+ *
+ * The `mic` package uses a Windows SoX command that writes `-p` pipe output.
+ * That is not guaranteed to be headerless mono PCM, while the rest of this
+ * application treats incoming chunks as raw S16LE. Spawn SoX/arecord directly
+ * so saved WAV files and VAD always see the same format.
+ */
+export function startAudioCapture(format: AudioFormat, deviceId?: string): AudioCaptureProcess {
+  const bitDepth = String(format.bitDepth);
+  const channels = String(format.channels);
+  const rate = String(format.sampleRate);
+
+  if (IS_LINUX) {
+    const args = [
+      '-q',
+      ...(deviceId ? ['-D', deviceId] : []),
+      '-c', channels,
+      '-r', rate,
+      '-f', format.bitDepth === 16 ? 'S16_LE' : `S${format.bitDepth}_LE`,
+      '-t', 'raw',
+      '-',
+    ];
+    return {
+      process: spawn('arecord', args, { stdio: ['ignore', 'pipe', 'pipe'] }),
+      command: 'arecord',
+      args,
+    };
+  }
+
+  const inputType = IS_WINDOWS ? 'waveaudio' : 'coreaudio';
+  const inputDevice = deviceId ?? 'default';
+  const args = [
+    '-q',
+    '-t', inputType,
+    inputDevice,
+    '-b', bitDepth,
+    '--endian', 'little',
+    '-c', channels,
+    '-r', rate,
+    '-e', 'signed-integer',
+    '-t', 'raw',
+    '-',
+  ];
+
+  return {
+    process: spawn('sox', args, { stdio: ['ignore', 'pipe', 'pipe'] }),
+    command: 'sox',
+    args,
+  };
 }
 
 export function resolveInputAudioFormat(deviceId?: string): AudioFormat {

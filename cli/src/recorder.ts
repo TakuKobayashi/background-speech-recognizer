@@ -12,11 +12,8 @@ import {
   pcmToSeconds,
 } from './utils';
 import { VadProcessor, VadStateMachine, VadMode } from './vad';
-import { getMicConfig, resolveInputAudioFormat } from './platform';
+import { resolveInputAudioFormat, startAudioCapture, type AudioCaptureProcess } from './platform';
 import { logger } from './logger';
-
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const mic = require('mic');
 
 export interface RecordingSession {
   pcmBuffer: Buffer;
@@ -49,7 +46,7 @@ export type RecorderEvent =
  */
 export class VoiceRecorder extends EventEmitter {
   // マイク関連
-  private micInstance: unknown = null;
+  private micInstance: AudioCaptureProcess | null = null;
   private micStream:   NodeJS.ReadableStream | null = null;
 
   // VAD
@@ -123,11 +120,9 @@ export class VoiceRecorder extends EventEmitter {
     this.audioFormat = resolveInputAudioFormat(this.deviceId);
     this.vadProcessor.destroy();
     this.vadProcessor = new VadProcessor(this.vadMode, this.audioFormat);
-    const config = getMicConfig(this.audioFormat, this.deviceId);
-
     try {
-      this.micInstance = mic(config);
-      this.micStream   = (this.micInstance as { getAudioStream(): NodeJS.ReadableStream }).getAudioStream();
+      this.micInstance = startAudioCapture(this.audioFormat, this.deviceId);
+      this.micStream   = this.micInstance.process.stdout;
     } catch (err) {
       this.handleMicError(new Error(`マイク初期化失敗: ${String(err)}`));
       return;
@@ -143,14 +138,25 @@ export class VoiceRecorder extends EventEmitter {
       this.handleMicError(err);
     });
 
-    (this.micInstance as { start(): void }).start();
+    this.micInstance.process.on('error', (err: Error) => {
+      this.handleMicError(err);
+    });
+    this.micInstance.process.stderr.on('data', (chunk: Buffer) => {
+      const message = chunk.toString('utf8').trim();
+      if (message) logger.warn(`[Recorder] audio backend stderr: ${message}`);
+    });
+    this.micInstance.process.on('exit', (code, signal) => {
+      if (!this.isRunning) return;
+      this.handleMicError(new Error(`audio backend exited code=${code ?? 'null'} signal=${signal ?? 'null'}`));
+    });
+
     this.reconnectAttempts = 0;
-    logger.info(`[Recorder] マイク開始 sampleRate=${this.audioFormat.sampleRate} channels=${this.audioFormat.channels} bitDepth=${this.audioFormat.bitDepth}`);
+    logger.info(`[Recorder] マイク開始 sampleRate=${this.audioFormat.sampleRate} channels=${this.audioFormat.channels} bitDepth=${this.audioFormat.bitDepth} command=${this.micInstance.command} args=${this.micInstance.args.join(' ')}`);
   }
 
   private destroyMic(): void {
     try {
-      (this.micInstance as { stop(): void })?.stop();
+      this.micInstance?.process.kill('SIGTERM');
     } catch { /* ignore */ }
     this.micStream   = null;
     this.micInstance = null;
