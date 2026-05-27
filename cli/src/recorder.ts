@@ -61,6 +61,9 @@ export class VoiceRecorder extends EventEmitter {
   private readonly maxSegmentSeconds: number;
   private readonly segmentOverlapSeconds: number;
   private audioFormat: AudioFormat = DEFAULT_AUDIO_FORMAT;
+  private captureStartedAt = 0;
+  private capturedBytes = 0;
+  private sampleRateCalibrated = false;
 
   // プリロールバッファ（固定サイズ循環）
   private readonly PRE_ROLL_FRAMES = 15; // 150ms
@@ -118,6 +121,9 @@ export class VoiceRecorder extends EventEmitter {
 
   private startMic(): void {
     this.audioFormat = resolveInputAudioFormat(this.deviceId);
+    this.captureStartedAt = Date.now();
+    this.capturedBytes = 0;
+    this.sampleRateCalibrated = false;
     this.vadProcessor.destroy();
     this.vadProcessor = new VadProcessor(this.vadMode, this.audioFormat);
     try {
@@ -207,6 +213,7 @@ export class VoiceRecorder extends EventEmitter {
 
   private async handleChunk(chunk: Buffer): Promise<void> {
     if (!this.isRunning) return;
+    this.calibrateSampleRate(chunk.length);
 
     // 音量レベル（ピーク dB）
     const db = this.rmsDb(chunk);
@@ -320,4 +327,48 @@ export class VoiceRecorder extends EventEmitter {
     const rms = Math.sqrt(sum / n);
     return rms > 0 ? 20 * Math.log10(rms) : -100;
   }
+
+  private calibrateSampleRate(chunkBytes: number): void {
+    if (this.sampleRateCalibrated) return;
+
+    this.capturedBytes += chunkBytes;
+    const elapsedSeconds = (Date.now() - this.captureStartedAt) / 1000;
+    if (elapsedSeconds < 2.0) return;
+
+    this.sampleRateCalibrated = true;
+    const bytesPerSampleFrame = this.audioFormat.channels * (this.audioFormat.bitDepth / 8);
+    const measuredRate = Math.round(this.capturedBytes / elapsedSeconds / bytesPerSampleFrame);
+    const normalizedRate = normalizeSampleRate(measuredRate);
+    const currentRate = this.audioFormat.sampleRate;
+
+    logger.info(`[Recorder] sampleRate calibration measured=${measuredRate} normalized=${normalizedRate} configured=${currentRate} elapsed=${elapsedSeconds.toFixed(2)}s bytes=${this.capturedBytes}`);
+
+    if (!normalizedRate || Math.abs(normalizedRate - currentRate) / currentRate < 0.10) return;
+
+    this.audioFormat = { ...this.audioFormat, sampleRate: normalizedRate };
+    this.vadProcessor.destroy();
+    this.vadProcessor = new VadProcessor(this.vadMode, this.audioFormat);
+    if (this.activeBuffer) {
+      const old = this.activeBuffer.concat();
+      this.activeBuffer.clear();
+      this.activeBuffer = new BoundedBuffer(this.audioFormat);
+      this.activeBuffer.push(old);
+    }
+
+    logger.warn(`[Recorder] sampleRate mismatch corrected configured=${currentRate} actual=${normalizedRate}`);
+  }
+}
+
+function normalizeSampleRate(rate: number): number | undefined {
+  const commonRates = [8000, 11025, 16000, 22050, 24000, 32000, 44100, 48000, 88200, 96000, 176400, 192000];
+  let best = commonRates[0];
+  let bestDiff = Math.abs(rate - best);
+  for (const candidate of commonRates.slice(1)) {
+    const diff = Math.abs(rate - candidate);
+    if (diff < bestDiff) {
+      best = candidate;
+      bestDiff = diff;
+    }
+  }
+  return bestDiff / best <= 0.12 ? best : undefined;
 }

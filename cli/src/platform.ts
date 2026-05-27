@@ -98,11 +98,11 @@ export function startAudioCapture(format: AudioFormat, deviceId?: string): Audio
     inputDevice,
     '-b', bitDepth,
     '--endian', 'little',
-    '-c', channels,
-    '-r', rate,
     '-e', 'signed-integer',
     '-t', 'raw',
     '-',
+    'channels', channels,
+    'rate', '-v', rate,
   ];
 
   return {
@@ -176,11 +176,11 @@ function probeSoxRate(sampleRate: number, deviceId?: string): boolean {
     inputDevice,
     '-b', String(DEFAULT_AUDIO_FORMAT.bitDepth),
     '--endian', 'little',
-    '-c', String(DEFAULT_AUDIO_FORMAT.channels),
-    '-r', String(sampleRate),
     '-e', 'signed-integer',
     '-t', 'raw',
     '-',
+    'channels', String(DEFAULT_AUDIO_FORMAT.channels),
+    'rate', '-v', String(sampleRate),
     'trim', '0', '0.05',
   ];
   const r = spawnSync('sox', args, { stdio: ['ignore', 'ignore', 'ignore'], timeout: 2000 });
