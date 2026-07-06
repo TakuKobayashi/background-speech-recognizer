@@ -1,7 +1,7 @@
 name: background-speech-recognizer
 slug: background-speech-recognizer
-description:
-description_ja: マイク音声をローカルで常時録音し、VADとwhisper.cppを使ってリアルタイムに文字起こしするAndroidアプリおよびCLIツール。
+description: Android app and CLI that use local VAD and whisper.cpp to continuously transcribe microphone audio in real time.
+description_ja: マイク音声をローカルで常時録音し、VAD と whisper.cpp を使ってリアルタイムに文字起こしする Android アプリおよび CLI ツール。
 translation_locked: false
 status: incubating
 repo:
